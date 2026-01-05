@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCPRWLcB9BODRYcZBkfCTBA7N78OQDhaKo",
@@ -56,12 +56,14 @@ const auth = getAuth(app);
             files[s.id] = { v1: [], v2: [] };
         });
 
-signInAnonymously(auth).catch((error) => {
-    console.error("Auth failed. Ensure Anonymous Auth is enabled in Firebase Console:", error);
-});
-
 onAuthStateChanged(auth, (user) => {
-    if (user) setupFirebaseListeners(activeStageId);
+    if (user) {
+        setupFirebaseListeners(activeStageId);
+        if (!currentRole) renderRoleSelectionPlaceholder();
+        else renderWorkspace();
+    } else {
+        renderLoginForm();
+    }
 });
 
         window.initStages = function() {
@@ -147,9 +149,10 @@ onAuthStateChanged(auth, (user) => {
             }
         };
 
-        window.logout = function() {
+        window.logout = async function() {
             if (!confirm('Are you sure you want to logout?')) return;
             
+            await signOut(auth);
             currentRole = null;
             document.getElementById('roleSelect').value = "";
             
@@ -162,7 +165,6 @@ onAuthStateChanged(auth, (user) => {
             if (sidebarIcon) sidebarIcon.className = "fas fa-user";
 
             toggleLogoutButtons(false);
-            renderWorkspace();
             
             // Close sidebar if open
             const mobileSidebar = document.getElementById('mobileSidebar');
@@ -174,6 +176,57 @@ onAuthStateChanged(auth, (user) => {
         function toggleLogoutButtons(show) {
             const btns = document.querySelectorAll('#headerLogoutBtn, .sidebar-logout-btn');
             btns.forEach(btn => btn.style.display = show ? 'flex' : 'none');
+        }
+
+        function renderRoleSelectionPlaceholder() {
+            const panel = document.getElementById('mainPanel');
+            panel.innerHTML = `
+                <div class="card">
+                    <div class="placeholder-box">
+                        <i class="fas fa-layer-group fa-4x placeholder-icon"></i>
+                        <h3>Welcome to the Project Hub</h3>
+                        <p class="placeholder-text">Select your role to initialize your specific workspace.</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLoginForm() {
+            const panel = document.getElementById('mainPanel');
+            panel.innerHTML = `
+                <div class="card" style="max-width: 400px; margin: 2rem auto;">
+                    <div class="card-header"><span class="card-title">Login Required</span></div>
+                    <div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                        <div>
+                            <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.5rem;">Email</label>
+                            <input type="email" id="auth-email" style="width:100%; padding:0.6rem; border:1px solid var(--border); border-radius:0.5rem;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.5rem;">Password</label>
+                            <input type="password" id="auth-password" style="width:100%; padding:0.6rem; border:1px solid var(--border); border-radius:0.5rem;">
+                        </div>
+                        <div style="display:flex; gap:1rem; margin-top:1rem;">
+                            <button onclick="handleLogin()" style="flex:1; background:var(--primary); color:white; border:none; padding:0.75rem; border-radius:0.5rem; cursor:pointer; font-weight:600;">Login</button>
+                            <button onclick="handleRegister()" style="flex:1; background:transparent; border:1px solid var(--primary); color:var(--primary); padding:0.75rem; border-radius:0.5rem; cursor:pointer; font-weight:600;">Register</button>
+                        </div>
+                        <div id="auth-error" style="color:red; font-size:0.8rem; text-align:center; display:none;"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        window.handleLogin = async function() {
+            const email = document.getElementById('auth-email').value;
+            const pass = document.getElementById('auth-password').value;
+            try { await signInWithEmailAndPassword(auth, email, pass); }
+            catch (e) { document.getElementById('auth-error').textContent = e.message; document.getElementById('auth-error').style.display = 'block'; }
+        }
+
+        window.handleRegister = async function() {
+            const email = document.getElementById('auth-email').value;
+            const pass = document.getElementById('auth-password').value;
+            try { await createUserWithEmailAndPassword(auth, email, pass); }
+            catch (e) { document.getElementById('auth-error').textContent = e.message; document.getElementById('auth-error').style.display = 'block'; }
         }
 
         window.renderWorkspace = function() {
