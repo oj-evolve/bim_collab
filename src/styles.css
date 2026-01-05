@@ -389,7 +389,7 @@
         /* MOBILE RESPONSIVENESS */
         @media (max-width: 768px) {
             :root { --spacing: 12px; --header-h: 56px; }
-            .header { padding: 0 1rem; }
+            .header { padding: 0.25rem 0.5rem; }
             .card { padding: 0.75rem; }
             
             .viewer-toolbar {
@@ -406,6 +406,11 @@
             .chat-container { height: 40vh; min-height: 300px; }
             .mobile-menu-btn { display: block; }
             #headerLogoutBtn { display: none !important; }
+
+            /* Mobile Header Tweaks */
+            .logo { font-size: 0.9rem; }
+            .logo i { font-size: 1rem; }
+            #roleSelect { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
         }
 
         /* MOBILE SIDEBAR */
@@ -555,4 +560,18 @@
         .back-to-top:hover {
             background: var(--primary-hover);
             transform: translateY(-2px);
+        }
+
+        /* PLACEHOLDER BOX */
+        .placeholder-box {
+            text-align: center;
+            padding: 4rem 1rem;
+        }
+        .placeholder-icon {
+            margin-bottom: 1.5rem;
+            opacity: 0.1;
+        }
+        .placeholder-text {
+            color: var(--text-muted);
+            margin-top: 0.5rem;
         }

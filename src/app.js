@@ -18,14 +18,6 @@ const db = getFirestore(app);
 const storageService = getStorage(app);
 const auth = getAuth(app);
 
-signInAnonymously(auth).catch((error) => {
-    console.error("Auth failed. Ensure Anonymous Auth is enabled in Firebase Console:", error);
-});
-
-onAuthStateChanged(auth, (user) => {
-    if (user) setupFirebaseListeners(activeStageId);
-});
-
  const projectStages = [
             { id: 's1', title: 'Briefing', sub: 'Initial Drawings & Concepts' },
             { id: 's2', title: 'Design Development', sub: 'Detailed Architectural Plans' },
@@ -63,6 +55,14 @@ onAuthStateChanged(auth, (user) => {
             storage[s.id] = { c1: [], c2: [] };
             files[s.id] = { v1: [], v2: [] };
         });
+
+signInAnonymously(auth).catch((error) => {
+    console.error("Auth failed. Ensure Anonymous Auth is enabled in Firebase Console:", error);
+});
+
+onAuthStateChanged(auth, (user) => {
+    if (user) setupFirebaseListeners(activeStageId);
+});
 
         window.initStages = function() {
             const list = document.getElementById('stageList');
