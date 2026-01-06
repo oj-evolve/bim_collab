@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, uploadBytesResumable } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
@@ -32,11 +32,11 @@ let currentRole = null;
 let activeStageId = 's1';
 
 const roleProfiles = {
-    architect: { name: "Big Bro Kele Architect", icon: "fa-pen-ruler" },
-    engineer: { name: "Mike Engineer", icon: "fa-hard-hat" },
-    contractor: { name: "John Contractor", icon: "fa-truck" },
-    quantity: { name: "Emily Surveyor", icon: "fa-calculator" },
-    owner: { name: "David Owner", icon: "fa-user-tie" }
+    architect: { name: "Kelly de Boss", icon: "fa-pen-ruler" },
+    engineer: { name: "Mike", icon: "fa-hard-hat" },
+    contractor: { name: "John", icon: "fa-truck" },
+    quantity: { name: "Emily", icon: "fa-calculator" },
+    owner: { name: "David", icon: "fa-user-tie" }
 };
 
 const storage = {};
@@ -45,6 +45,7 @@ const viewerStates = {};
 const typingTimers = {};
 const lastTypingUpdate = {};
 const replyStates = {};
+const activeUploads = {};
 let lastSendTime = 0;
 let cryptoKey = null;
 
@@ -52,6 +53,7 @@ let cryptoKey = null;
 let unsubscribeMessages = null;
 let unsubscribeFiles = null;
 let unsubscribeTyping = null;
+let unsubscribeProfile = null;
 
 projectStages.forEach(s => {
     storage[s.id] = { c1: [], c2: [] };
@@ -164,29 +166,54 @@ function setupFirebaseListeners(stageId) {
     });
 }
 
-document.getElementById('roleSelect').onchange = (e) => {
-    currentRole = e.target.value;
-    
-    // Update Dashboard Title from data-heading
-    const selectedOption = e.target.options[e.target.selectedIndex];
-    const heading = selectedOption.dataset.heading;
+function updateDashboardTitleAndSidebar() {
     const titleEl = document.getElementById('dashboardTitle');
     const headerEl = document.getElementById('dashboardHeader');
+    const welcomeEl = document.getElementById('welcomeMsg');
+    
     if (headerEl) headerEl.style.display = 'block';
-    if (titleEl && heading) titleEl.textContent = heading;
 
-    renderWorkspace();
-    toggleLogoutButtons(true);
+    if (titleEl && roleProfiles[currentRole]) {
+        const name = roleProfiles[currentRole].name;
+        let displayTitle = name;
+        if (currentRole === 'architect') displayTitle = `Arch ${name}`;
+        else if (currentRole === 'engineer') displayTitle = `Eng ${name}`;
+        else if (currentRole === 'quantity') displayTitle = `Svy ${name}`;
+        else if (currentRole === 'contractor') displayTitle = `Contractor ${name}`;
+        else if (currentRole === 'owner') displayTitle = `Owner ${name}`;
+        
+        titleEl.textContent = displayTitle;
+        if (welcomeEl) welcomeEl.textContent = "Welcome back,";
+    }
 
     const sidebarRole = document.getElementById('sidebarRoleDisplay');
     const sidebarName = document.getElementById('profileNameDisplay');
-    const sidebarIcon = document.getElementById('profileAvatarIcon');
 
     if (sidebarRole) sidebarRole.textContent = currentRole;
     if (roleProfiles[currentRole]) {
         if (sidebarName) sidebarName.textContent = roleProfiles[currentRole].name;
-        if (sidebarIcon) sidebarIcon.className = `fas ${roleProfiles[currentRole].icon}`;
     }
+}
+
+document.getElementById('roleSelect').onchange = (e) => {
+    currentRole = e.target.value;
+    
+    if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+    }
+
+    unsubscribeProfile = onSnapshot(doc(db, "profiles", currentRole), (docSnap) => {
+        if (docSnap.exists() && docSnap.data().name) {
+            roleProfiles[currentRole].name = docSnap.data().name;
+            updateDashboardTitleAndSidebar();
+        }
+    });
+
+    updateDashboardTitleAndSidebar();
+
+    renderWorkspace();
+    toggleLogoutButtons(true);
 };
 
 window.logout = function () {
@@ -195,18 +222,23 @@ window.logout = function () {
     currentRole = null;
     document.getElementById('roleSelect').value = "";
 
+    if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+    }
+
     const sidebarRole = document.getElementById('sidebarRoleDisplay');
     const sidebarName = document.getElementById('profileNameDisplay');
-    const sidebarIcon = document.getElementById('profileAvatarIcon');
 
     if (sidebarRole) sidebarRole.textContent = "No Role Selected";
     if (sidebarName) sidebarName.textContent = "Guest User";
-    if (sidebarIcon) sidebarIcon.className = "fas fa-user";
 
     const titleEl = document.getElementById('dashboardTitle');
     const headerEl = document.getElementById('dashboardHeader');
+    const welcomeEl = document.getElementById('welcomeMsg');
     if (titleEl) titleEl.textContent = "Dashboard";
     if (headerEl) headerEl.style.display = 'none';
+    if (welcomeEl) welcomeEl.textContent = "";
 
     toggleLogoutButtons(false);
     renderRoleSelectionPlaceholder();
@@ -314,10 +346,11 @@ window.chatNode = function (id, title, vId) {
                     <div class="chat-container" id="chat-box-${id}"></div>
                     <div id="typing-${id}" style="height: 15px; font-size: 0.7rem; color: #888; padding-left: 10px; font-style: italic;"></div>
                     <div id="reply-preview-${id}" style="font-size: 0.7rem; color: var(--primary); padding-left: 10px; display:none; margin-bottom: 5px;"></div>
-                    <div id="progress-container-${id}" style="display:none; padding: 0 10px; margin-bottom: 5px;">
-                        <div style="height: 4px; background: #eee; border-radius: 2px; overflow: hidden;">
+                    <div id="progress-container-${id}" style="display:none; padding: 0 10px; margin-bottom: 5px; align-items: center;">
+                        <div style="flex: 1; height: 4px; background: #eee; border-radius: 2px; overflow: hidden;">
                             <div id="progress-bar-${id}" style="height: 100%; width: 0%; background: var(--primary); transition: width 0.1s;"></div>
                         </div>
+                        <i class="fas fa-times-circle" style="margin-left: 8px; cursor: pointer; color: #dc3545; font-size: 0.9rem;" onclick="cancelUpload('${id}')" title="Cancel Upload"></i>
                     </div>
                     <div class="chat-input-area" style="position:relative">
                         <div id="emoji-picker-${id}" style="display:none; position:absolute; bottom:100%; left:0; background:#fff; border:1px solid #ccc; padding:8px; border-radius:4px; width:220px; flex-wrap:wrap; gap:4px; max-height:150px; overflow-y:auto; box-shadow: 0 -4px 12px rgba(0,0,0,0.15); z-index:100; margin-bottom: 8px;">
@@ -563,6 +596,12 @@ window.cancelReply = function (chatId) {
     }
 }
 
+window.cancelUpload = function(chatId) {
+    if (activeUploads[chatId]) {
+        activeUploads[chatId].cancel();
+    }
+}
+
 window.handleDragOver = function (e) {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -599,29 +638,48 @@ window.handleFile = async function (chatId, vId, input) {
     const uploadedNames = [];
 
     let i = 0;
-    if (pContainer) pContainer.style.display = 'block';
+    if (pContainer) pContainer.style.display = 'flex';
 
     for (const file of filesList) {
-        const storageRef = ref(storageService, `files/${activeStageId}/${vId}/${Date.now()}_${file.name}`);
+        try {
+            const storageRef = ref(storageService, `files/${activeStageId}/${vId}/${Date.now()}_${file.name}`);
+            const uploadTask = uploadBytesResumable(storageRef, file);
+            activeUploads[chatId] = uploadTask;
 
-        // Simple progress simulation since uploadBytes doesn't provide stream in this context easily without Resumable
-        if (pBar) pBar.style.width = '50%';
-
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-
-        if (pBar) pBar.style.width = '100%';
-
-        await addDoc(collection(db, "files"), {
-            stageId: activeStageId,
-            viewId: vId,
-            name: file.name,
-            url: url,
-            storagePath: snapshot.ref.fullPath,
-            timestamp: serverTimestamp()
-        });
-
-        uploadedNames.push(file.name);
+            await new Promise((resolve, reject) => {
+                uploadTask.on('state_changed',
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                        if (pBar) pBar.style.width = `${progress}%`;
+                    },
+                    (error) => {
+                        reject(error);
+                    },
+                    async () => {
+                        const url = await getDownloadURL(uploadTask.snapshot.ref);
+                        await addDoc(collection(db, "files"), {
+                            stageId: activeStageId,
+                            viewId: vId,
+                            name: file.name,
+                            url: url,
+                            storagePath: uploadTask.snapshot.ref.fullPath,
+                            timestamp: serverTimestamp()
+                        });
+                        uploadedNames.push(file.name);
+                        resolve();
+                    }
+                );
+            });
+            delete activeUploads[chatId];
+        } catch (error) {
+            delete activeUploads[chatId];
+            if (error.code === 'storage/canceled') {
+                console.log("Upload canceled by user");
+                break;
+            }
+            console.error("Error uploading file:", file.name, error);
+            alert(`Failed to upload ${file.name}: ${error.message}`);
+        }
     }
 
     if (pContainer) pContainer.style.display = 'none';
@@ -900,6 +958,69 @@ window.viewAllFiles = function (chatId, vId) {
 
     document.body.appendChild(modal);
     renderList();
+}
+
+window.openSettingsModal = function () {
+    if (!currentRole) {
+        alert("Please select a role to access settings.");
+        return;
+    }
+
+    const modalId = 'settings-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.innerHTML = `<span class="card-title">Settings</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    
+    const currentName = roleProfiles[currentRole].name;
+
+    body.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:1rem;">
+            <div>
+                <label style="display:block; font-size:0.85rem; margin-bottom:0.25rem; color:var(--text-muted)">Display Name</label>
+                <input type="text" id="settings-name-input" value="${currentName}" style="width:100%; padding:0.5rem; border:1px solid var(--border); border-radius:0.25rem; background:var(--bg-body); color:var(--text-main)">
+            </div>
+            <button onclick="saveSettings()" style="background:var(--primary); color:white; border:none; padding:0.75rem; border-radius:0.25rem; cursor:pointer; font-weight:600">Save Changes</button>
+        </div>
+    `;
+
+    card.appendChild(header);
+    card.appendChild(body);
+    modal.appendChild(card);
+
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+
+    document.body.appendChild(modal);
+}
+
+window.saveSettings = async function() {
+    const input = document.getElementById('settings-name-input');
+    if (input && input.value.trim() !== "") {
+        const newName = input.value.trim();
+        
+        try {
+            await setDoc(doc(db, "profiles", currentRole), { name: newName }, { merge: true });
+            document.getElementById('settings-modal').remove();
+        } catch (e) {
+            console.error("Error saving settings:", e);
+            alert("Failed to save settings.");
+        }
+    }
 }
 
 window.openContactModal = function (e) {

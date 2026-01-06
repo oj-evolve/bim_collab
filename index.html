@@ -45,6 +45,7 @@
 
         <section id="mainPanel">
             <div id="dashboardHeader" style="display: none; margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0;">
+                <div id="welcomeMsg" style="font-size: 0.9rem; color: #666; margin-bottom: 0.2rem;"></div>
                 <h2 id="dashboardTitle" style="margin: 0; color: var(--primary); font-size: 1.8rem; font-weight: 600;">Dashboard</h2>
             </div>
             <div id="workspaceContent">
@@ -74,16 +75,13 @@
     <!-- Mobile Sidebar & Logic -->
     <div class="mobile-sidebar-overlay" id="sidebarOverlay"></div>
     <aside class="mobile-sidebar" id="mobileSidebar">
-        <div class="sidebar-header">
+        <div class="sidebar-header" style="background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=600&q=80') center/cover no-repeat; color: white;">
             <span class="sidebar-title">Menu</span>
             <button class="close-sidebar-btn" id="closeSidebarBtn" aria-label="Close menu">
                 <i class="fas fa-times"></i>
             </button>
         </div>
         <div class="sidebar-profile">
-            <div class="profile-avatar">
-                <i class="fas fa-user" id="profileAvatarIcon"></i>
-            </div>
             <div class="profile-info">
                 <div class="profile-name" id="profileNameDisplay">Guest User</div>
                 <div class="profile-role" id="sidebarRoleDisplay">No Role Selected</div>
@@ -93,7 +91,7 @@
             <!-- Placeholder Navigation Items -->
             <div style="font-weight: 500; color: var(--text-main);"><i class="fas fa-home" style="width: 24px;"></i> Dashboard</div>
             <div style="font-weight: 500; color: var(--text-main);"><i class="fas fa-project-diagram" style="width: 24px;"></i> Projects</div>
-            <div style="font-weight: 500; color: var(--text-main);"><i class="fas fa-cog" style="width: 24px;"></i> Settings</div>
+            <div style="font-weight: 500; color: var(--text-main); cursor: pointer;" onclick="openSettingsModal()"><i class="fas fa-cog" style="width: 24px;"></i> Settings</div>
             <button class="sidebar-logout-btn" onclick="logout()" style="display: none;">
                 <i class="fas fa-sign-out-alt" style="width: 24px;"></i> Logout
             </button>
