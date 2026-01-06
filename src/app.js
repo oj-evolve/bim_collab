@@ -7,7 +7,7 @@ const firebaseConfig = {
     apiKey: "AIzaSyCPRWLcB9BODRYcZBkfCTBA7N78OQDhaKo",
     authDomain: "bim-collab.firebaseapp.com",
     projectId: "bim-collab",
-    storageBucket: "bim-collab.firebasestorage.app",
+    storageBucket: "bim-collab.appspot.com",
     messagingSenderId: "20536267192",
     appId: "1:20536267192:web:58510a149f6d36975bbf4d",
     measurementId: "G-Y6Z79DHLXK"
