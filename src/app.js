@@ -40,6 +40,7 @@ const roleProfiles = {
 };
 
 const storage = {};
+const archivedStorage = {};
 const files = {};
 const viewerStates = {};
 const typingTimers = {};
@@ -59,6 +60,7 @@ let unsubscribePinned = null;
 
 projectStages.forEach(s => {
     storage[s.id] = { c1: [], c2: [] };
+    archivedStorage[s.id] = { c1: [], c2: [] };
     files[s.id] = { v1: [], v2: [] };
 });
 
@@ -123,8 +125,19 @@ function setupFirebaseListeners(stageId) {
 
         // Reset local cache for this stage
         storage[stageId] = { c1: [], c2: [] };
+        archivedStorage[stageId] = { c1: [], c2: [] };
         snapshot.docs.forEach(doc => {
             const data = doc.data();
+            if (data.archived) {
+                if (archivedStorage[stageId][data.chatId]) {
+                    archivedStorage[stageId][data.chatId].push({
+                        id: doc.id,
+                        ...data,
+                        time: data.timestamp ? data.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'
+                    });
+                }
+                return;
+            }
             if (storage[stageId][data.chatId]) {
                 storage[stageId][data.chatId].push({
                     id: doc.id, // Store doc ID for deletion/editing
@@ -134,6 +147,12 @@ function setupFirebaseListeners(stageId) {
             }
         });
         loadStageData();
+
+        // Update archive modal if open
+        const archiveModal = document.getElementById('archived-messages-modal');
+        if (archiveModal && archiveModal.dataset.chatId) {
+            renderArchivedMessagesList(archiveModal.dataset.chatId);
+        }
     }, (error) => {
         console.error("Error listening to messages:", error);
         if (error.code === 'permission-denied') console.warn("Ensure Firestore Rules are deployed.");
@@ -215,9 +234,14 @@ function setupGlobalProfileListener() {
                 if (data.name) roleProfiles[role].name = data.name;
                 if (data.status) roleProfiles[role].status = data.status;
                 if (data.muteNotifications !== undefined) roleProfiles[role].muteNotifications = data.muteNotifications;
+                if (data.darkMode !== undefined) roleProfiles[role].darkMode = data.darkMode;
             }
             if (currentRole && role === currentRole) {
                 updateDashboardTitleAndSidebar();
+                // Apply dark mode setting immediately
+                if (roleProfiles[role].darkMode !== undefined) {
+                    document.body.classList.toggle('dark-mode', roleProfiles[role].darkMode);
+                }
             }
         });
         loadStageData();
@@ -304,6 +328,7 @@ window.logout = function () {
 
     const dropdown = document.getElementById('settingsDropdown');
     if (dropdown) dropdown.classList.remove('active');
+    document.body.classList.remove('dark-mode'); // Reset to light mode on logout
 
     renderRoleSelectionPlaceholder();
 
@@ -398,6 +423,14 @@ window.chatNode = function (id, title, vId, extraClass = '') {
     const emojis = ['👍', '👎', '😀', '😂', '😍', '🎉', '🔥', '❤️', '✅', '❌', '🤔', '😎', '😭', '👀', '🚀', '🏗️', '🏠', '👷'];
     const emojiHtml = emojis.map(e => `<span style="cursor:pointer; font-size:1.2rem; padding:4px; user-select:none;" onclick="insertEmoji('${id}', '${e}')">${e}</span>`).join('');
 
+    let ownerControls = '';
+    if (currentRole === 'owner') {
+        ownerControls = `
+            <button onclick="openArchivedMessagesModal('${id}')" title="View Archived" style="background:none; border:none; color:var(--text-muted); cursor:pointer; margin-right:5px;" onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color='var(--text-muted)'"><i class="fas fa-history"></i></button>
+            <button onclick="openArchiveChatModal('${id}')" title="Archive Chat" style="background:none; border:none; color:var(--text-muted); cursor:pointer;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--text-muted)'"><i class="fas fa-archive"></i></button>
+        `;
+    }
+
     return `
                 <div class="card ${extraClass}" ondragover="handleDragOver(event)" ondragenter="highlight(event)" ondragleave="unhighlight(event)" ondrop="handleDrop(event, '${id}', '${vId}')">
                     <div class="card-header">
@@ -413,7 +446,7 @@ window.chatNode = function (id, title, vId, extraClass = '') {
                                 <input type="text" id="search-${id}" placeholder="Search..." class="search-input" oninput="handleSearchInput('${id}')">
                                 <i id="search-clear-${id}" class="fas fa-times search-clear-btn" onclick="clearSearch('${id}')"></i>
                             </div>
-                            <button onclick="clearChat('${id}')" title="Clear Chat" style="background:none; border:none; color:var(--text-muted); cursor:pointer;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--text-muted)'"><i class="fas fa-trash-alt"></i></button>
+                            ${ownerControls}
                         </div>
                     </div>
                     <div id="pinned-message-${id}" class="pinned-message-banner" style="display:none">
@@ -708,19 +741,194 @@ window.deleteMessage = async function (chatId, msgId) {
     }
 }
 
-window.clearChat = async function (chatId) {
+window.archiveChat = async function (chatId) {
     if (!currentRole) return;
-    if (!confirm('Are you sure you want to clear the entire chat history for this stage? This cannot be undone.')) return;
+
+    const modal = document.getElementById('archive-chat-modal');
+    if (modal) modal.remove();
 
     const msgs = storage[activeStageId][chatId];
     if (!msgs || msgs.length === 0) return;
 
-    const deletePromises = msgs.map(m => deleteDoc(doc(db, "messages", m.id)));
+    const archivePromises = msgs.map(m => updateDoc(doc(db, "messages", m.id), { archived: true }));
     try {
-        await Promise.all(deletePromises);
+        await Promise.all(archivePromises);
     } catch (e) {
-        console.error("Error clearing chat:", e);
-        alert("Failed to clear chat.");
+        console.error("Error archiving chat:", e);
+        alert("Failed to archive chat.");
+    }
+}
+
+window.openArchiveChatModal = function(chatId) {
+    const modalId = 'archive-chat-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '320px';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title">Archive Chat History</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem;">Are you sure you want to archive the chat history? Messages will be hidden but preserved.</p>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.5rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.25rem; cursor:pointer; font-size:0.85rem;">Cancel</button>
+                <button onclick="archiveChat('${chatId}')" style="padding:0.5rem 1rem; border:none; background:#ef4444; color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Archive</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
+window.openArchivedMessagesModal = function(chatId) {
+    const modalId = 'archived-messages-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.dataset.chatId = chatId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '500px';
+    card.style.height = '600px';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title">Archived Messages</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div style="padding: 0.5rem 1.5rem; border-bottom: 1px solid var(--border);">
+            <input type="text" id="archived-search-input" placeholder="Search archived messages..." style="width:100%; padding:0.5rem; border:1px solid var(--border); border-radius:0.25rem; font-size:0.85rem;" oninput="renderArchivedMessagesList('${chatId}')">
+        </div>
+        <div class="modal-body" id="archived-messages-list">
+            <div style="text-align:center; padding:2rem; color:var(--text-muted);">Loading...</div>
+        </div>
+        <div style="padding:1rem; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:0.5rem;">
+            <button onclick="deleteAllArchivedMessages('${chatId}')" style="padding:0.5rem 1rem; border:none; background:#ef4444; color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Delete All Permanently</button>
+            <button onclick="restoreAllMessages('${chatId}')" style="padding:0.5rem 1rem; border:none; background:var(--primary); color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Restore All</button>
+            <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.5rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.25rem; cursor:pointer; font-size:0.85rem;">Close</button>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+    
+    renderArchivedMessagesList(chatId);
+}
+
+window.renderArchivedMessagesList = async function(chatId) {
+    const container = document.getElementById('archived-messages-list');
+    if (!container) return;
+    
+    const searchInput = document.getElementById('archived-search-input');
+    const term = searchInput ? searchInput.value.toLowerCase() : '';
+
+    const msgs = archivedStorage[activeStageId][chatId];
+    if (!msgs || msgs.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding:2rem; display:flex; flex-direction:column; align-items:center; gap:0.5rem;"><i class="fas fa-box-open" style="font-size:2rem; opacity:0.5"></i><span>No archived messages found.</span></div>';
+        return;
+    }
+
+    container.innerHTML = '';
+    
+    for (const m of msgs) {
+        let text = m.text;
+        if (m.isEncrypted) text = await decryptData(m.text);
+
+        if (term && !text.toLowerCase().includes(term) && !m.user.toLowerCase().includes(term)) continue;
+        
+        const item = document.createElement('div');
+        item.style.cssText = 'background:var(--bg-body); padding:0.75rem; margin-bottom:0.5rem; border-radius:0.5rem; border:1px solid var(--border); display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;';
+        
+        const content = document.createElement('div');
+        content.style.flex = '1';
+        content.innerHTML = `
+            <div style="display:flex; justify-content:space-between; margin-bottom:0.25rem;">
+                <strong style="font-size:0.8rem; color:var(--primary);">${m.user}</strong>
+                <span style="font-size:0.7rem; color:var(--text-muted);">${m.time}</span>
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-main); word-break:break-word;">${escapeHtml(text)}</div>
+        `;
+        
+        const btn = document.createElement('button');
+        btn.innerHTML = '<i class="fas fa-trash-restore"></i>';
+        btn.title = "Restore Message";
+        btn.style.cssText = "border:none; background:var(--bg-card); color:var(--primary); cursor:pointer; font-size:0.9rem; padding:0.5rem; border-radius:0.25rem; border:1px solid var(--border); transition:all 0.2s;";
+        btn.onmouseover = () => { btn.style.background = 'var(--primary)'; btn.style.color = 'white'; };
+        btn.onmouseout = () => { btn.style.background = 'var(--bg-card)'; btn.style.color = 'var(--primary)'; };
+        btn.onclick = () => restoreMessage(m.id);
+        
+        item.appendChild(content);
+        item.appendChild(btn);
+        container.appendChild(item);
+    }
+
+    if (container.children.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:var(--text-muted); padding:2rem;">No matching messages found.</div>';
+    }
+}
+
+window.restoreMessage = async function(msgId) {
+    try {
+        await updateDoc(doc(db, "messages", msgId), { archived: false });
+    } catch (e) {
+        console.error("Error restoring message:", e);
+        alert("Failed to restore message.");
+    }
+}
+
+window.restoreAllMessages = async function(chatId) {
+    const msgs = archivedStorage[activeStageId][chatId];
+    if (!msgs || msgs.length === 0) {
+        alert("No archived messages to restore.");
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to restore ${msgs.length} archived messages?`)) return;
+
+    try {
+        const promises = msgs.map(m => updateDoc(doc(db, "messages", m.id), { archived: false }));
+        await Promise.all(promises);
+    } catch (e) {
+        console.error("Error restoring all messages:", e);
+        alert("Failed to restore messages.");
+    }
+}
+
+window.deleteAllArchivedMessages = async function(chatId) {
+    const msgs = archivedStorage[activeStageId][chatId];
+    if (!msgs || msgs.length === 0) {
+        alert("No archived messages to delete.");
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to PERMANENTLY delete ${msgs.length} archived messages? This action cannot be undone.`)) return;
+
+    try {
+        const promises = msgs.map(m => deleteDoc(doc(db, "messages", m.id)));
+        await Promise.all(promises);
+    } catch (e) {
+        console.error("Error deleting all archived messages:", e);
+        alert("Failed to delete messages.");
     }
 }
 
@@ -1233,6 +1441,7 @@ window.toggleSettingsDropdown = function() {
     const input = document.getElementById('settingsNameInput');
     const statusSelect = document.getElementById('settingsStatusSelect');
     const muteToggle = document.getElementById('settingsMuteToggle');
+    const darkModeToggle = document.getElementById('settingsDarkModeToggle');
     
     if (!dropdown) return;
     
@@ -1244,6 +1453,7 @@ window.toggleSettingsDropdown = function() {
             input.value = roleProfiles[currentRole].name;
             if (statusSelect) statusSelect.value = roleProfiles[currentRole].status || 'online';
             if (muteToggle) muteToggle.checked = !!roleProfiles[currentRole].muteNotifications;
+            if (darkModeToggle) darkModeToggle.checked = !!roleProfiles[currentRole].darkMode;
         }
     }
 }
@@ -1252,6 +1462,7 @@ window.saveSettingsFromDropdown = async function() {
     const input = document.getElementById('settingsNameInput');
     const statusSelect = document.getElementById('settingsStatusSelect');
     const muteToggle = document.getElementById('settingsMuteToggle');
+    const darkModeToggle = document.getElementById('settingsDarkModeToggle');
     const saveBtn = document.querySelector('.dropdown-save-btn');
 
     if (input && input.value.trim() !== "" && currentRole) {
@@ -1264,8 +1475,9 @@ window.saveSettingsFromDropdown = async function() {
         const newName = input.value.trim();
         const newStatus = statusSelect ? statusSelect.value : 'online';
         const isMuted = muteToggle ? muteToggle.checked : false;
+        const isDarkMode = darkModeToggle ? darkModeToggle.checked : false;
         try {
-            await setDoc(doc(db, "profiles", currentRole), { name: newName, status: newStatus, muteNotifications: isMuted }, { merge: true });
+            await setDoc(doc(db, "profiles", currentRole), { name: newName, status: newStatus, muteNotifications: isMuted, darkMode: isDarkMode }, { merge: true });
             toggleSettingsDropdown();
         } catch (e) {
             console.error("Error saving settings:", e);
