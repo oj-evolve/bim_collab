@@ -54,6 +54,16 @@
         </section>
     </main>
 
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+                "firebase/storage": "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js",
+                "firebase/analytics": "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js"
+            }
+        }
+    </script>
     <script type="module" src="./src/app.js"></script>
     
     <!-- Mobile Sidebar & Logic -->
@@ -85,20 +95,5 @@
         </div>
     </aside>
 
-    <script>
-        const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-        const mobileSidebar = document.getElementById('mobileSidebar');
-        const sidebarOverlay = document.getElementById('sidebarOverlay');
-        const closeSidebarBtn = document.getElementById('closeSidebarBtn');
-
-        function toggleSidebar() {
-            mobileSidebar.classList.toggle('open');
-            sidebarOverlay.classList.toggle('active');
-        }
-
-        if(mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleSidebar);
-        if(closeSidebarBtn) closeSidebarBtn.addEventListener('click', toggleSidebar);
-        if(sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
-    </script>
 </body>
 </html>
