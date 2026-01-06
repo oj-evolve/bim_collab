@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
@@ -43,6 +43,7 @@ const storage = {};
 const files = {};
 const viewerStates = {};
 const typingTimers = {};
+const lastTypingUpdate = {};
 const replyStates = {};
 let lastSendTime = 0;
 let cryptoKey = null;
@@ -50,6 +51,7 @@ let cryptoKey = null;
 // Firebase Unsubscribe functions
 let unsubscribeMessages = null;
 let unsubscribeFiles = null;
+let unsubscribeTyping = null;
 
 projectStages.forEach(s => {
     storage[s.id] = { c1: [], c2: [] };
@@ -84,10 +86,23 @@ window.switchStage = function (id) {
 function setupFirebaseListeners(stageId) {
     if (unsubscribeMessages) unsubscribeMessages();
     if (unsubscribeFiles) unsubscribeFiles();
+    if (unsubscribeTyping) unsubscribeTyping();
+
+    let isInitialLoad = true;
 
     // Listen for Messages
     const qMsg = query(collection(db, "messages"), where("stageId", "==", stageId), orderBy("timestamp", "asc"));
     unsubscribeMessages = onSnapshot(qMsg, (snapshot) => {
+        if (!isInitialLoad && currentRole) {
+            snapshot.docChanges().forEach(change => {
+                if (change.type === "added") {
+                    const d = change.doc.data();
+                    if (d.user !== currentRole) playNotificationSound();
+                }
+            });
+        }
+        isInitialLoad = false;
+
         // Reset local cache for this stage
         storage[stageId] = { c1: [], c2: [] };
         snapshot.docs.forEach(doc => {
@@ -125,10 +140,41 @@ function setupFirebaseListeners(stageId) {
         console.error("Error listening to files:", error);
         if (error.code === 'permission-denied') console.warn("Ensure Firestore Rules are deployed.");
     });
+
+    // Listen for Typing Status
+    const qTyping = query(collection(db, "typing"), where("stageId", "==", stageId), where("isTyping", "==", true));
+    unsubscribeTyping = onSnapshot(qTyping, (snapshot) => {
+        const typingMap = {};
+        snapshot.docs.forEach(doc => {
+            const d = doc.data();
+            if (d.user !== currentRole) {
+                if (!typingMap[d.chatId]) typingMap[d.chatId] = [];
+                const name = roleProfiles[d.user] ? roleProfiles[d.user].name : d.user;
+                if (!typingMap[d.chatId].includes(name)) typingMap[d.chatId].push(name);
+            }
+        });
+
+        ['c1', 'c2'].forEach(cid => {
+            const el = document.getElementById(`typing-${cid}`);
+            if (el) {
+                const names = typingMap[cid] || [];
+                el.textContent = names.length > 0 ? `${names.join(', ')} is typing...` : '';
+            }
+        });
+    });
 }
 
 document.getElementById('roleSelect').onchange = (e) => {
     currentRole = e.target.value;
+    
+    // Update Dashboard Title from data-heading
+    const selectedOption = e.target.options[e.target.selectedIndex];
+    const heading = selectedOption.dataset.heading;
+    const titleEl = document.getElementById('dashboardTitle');
+    const headerEl = document.getElementById('dashboardHeader');
+    if (headerEl) headerEl.style.display = 'block';
+    if (titleEl && heading) titleEl.textContent = heading;
+
     renderWorkspace();
     toggleLogoutButtons(true);
 
@@ -157,6 +203,11 @@ window.logout = function () {
     if (sidebarName) sidebarName.textContent = "Guest User";
     if (sidebarIcon) sidebarIcon.className = "fas fa-user";
 
+    const titleEl = document.getElementById('dashboardTitle');
+    const headerEl = document.getElementById('dashboardHeader');
+    if (titleEl) titleEl.textContent = "Dashboard";
+    if (headerEl) headerEl.style.display = 'none';
+
     toggleLogoutButtons(false);
     renderRoleSelectionPlaceholder();
 
@@ -173,7 +224,7 @@ function toggleLogoutButtons(show) {
 }
 
 function renderRoleSelectionPlaceholder() {
-    const panel = document.getElementById('mainPanel');
+    const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
     panel.innerHTML = `
                 <div class="card">
                     <div class="placeholder-box">
@@ -186,7 +237,7 @@ function renderRoleSelectionPlaceholder() {
 }
 
 window.renderWorkspace = function () {
-    const panel = document.getElementById('mainPanel');
+    const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
 
     // Engineer and Contractor see a restricted UI
     const isRestricted = (currentRole === 'engineer' || currentRole === 'contractor');
@@ -246,6 +297,9 @@ window.chatNode = function (id, title, vId) {
     const currentStageObj = projectStages.find(s => s.id === activeStageId);
     const stageName = currentStageObj ? currentStageObj.title : activeStageId;
 
+    const emojis = ['👍', '👎', '😀', '😂', '😍', '🎉', '🔥', '❤️', '✅', '❌', '🤔', '😎', '😭', '👀', '🚀', '🏗️', '🏠', '👷'];
+    const emojiHtml = emojis.map(e => `<span style="cursor:pointer; font-size:1.2rem; padding:4px; user-select:none;" onclick="insertEmoji('${id}', '${e}')">${e}</span>`).join('');
+
     return `
                 <div class="card" ondragover="handleDragOver(event)" ondragenter="highlight(event)" ondragleave="unhighlight(event)" ondrop="handleDrop(event, '${id}', '${vId}')">
                     <div class="card-header">
@@ -265,13 +319,19 @@ window.chatNode = function (id, title, vId) {
                             <div id="progress-bar-${id}" style="height: 100%; width: 0%; background: var(--primary); transition: width 0.1s;"></div>
                         </div>
                     </div>
-                    <div class="chat-input-area">
-                        <label style="cursor:pointer; color:var(--primary)">
+                    <div class="chat-input-area" style="position:relative">
+                        <div id="emoji-picker-${id}" style="display:none; position:absolute; bottom:100%; left:0; background:#fff; border:1px solid #ccc; padding:8px; border-radius:4px; width:220px; flex-wrap:wrap; gap:4px; max-height:150px; overflow-y:auto; box-shadow: 0 -4px 12px rgba(0,0,0,0.15); z-index:100; margin-bottom: 8px;">
+                            ${emojiHtml}
+                        </div>
+                        <label style="cursor:pointer; color:var(--primary); margin-right: 8px;" title="Attach File">
                             <i class="fas fa-paperclip"></i>
                             <input type="file" multiple style="display:none" onchange="handleFile('${id}', '${vId}', this)">
                         </label>
-                        <input type="text" id="input-${id}" placeholder="Message in ${stageName}..." oninput="handleTyping('${id}')" onkeypress="if(event.key==='Enter') send('${id}')">
-                        <button onclick="send('${id}')" class="send-btn"><i class="fas fa-paper-plane"></i></button>
+                        <button onclick="toggleEmojiPicker('${id}')" style="background:none; border:none; cursor:pointer; color:var(--primary); margin-right:8px; font-size: 1.1rem;" title="Add Emoji">
+                            <i class="far fa-smile"></i>
+                        </button>
+                        <input type="text" id="input-${id}" placeholder="Type a message..." style="height: 36px; font-size: 0.85rem;" oninput="handleTyping('${id}')" onkeypress="if(event.key==='Enter') send('${id}')">
+                        <button onclick="send('${id}')" class="send-btn" title="Send Message"><i class="fas fa-paper-plane"></i></button>
                     </div>
                 </div>
             `;
@@ -324,6 +384,7 @@ window.loadStageData = async function () {
                 delBtn.style.float = 'right';
                 delBtn.style.cursor = 'pointer';
                 delBtn.style.opacity = '0.3';
+                delBtn.title = 'Delete Message';
                 delBtn.onmouseover = () => delBtn.style.opacity = '1';
                 delBtn.onmouseout = () => delBtn.style.opacity = '0.3';
                 delBtn.onclick = () => deleteMessage(chatId, m.id);
@@ -335,6 +396,7 @@ window.loadStageData = async function () {
                 editBtn.style.cursor = 'pointer';
                 editBtn.style.opacity = '0.3';
                 editBtn.style.marginRight = '10px';
+                editBtn.title = 'Edit Message';
                 editBtn.onmouseover = () => editBtn.style.opacity = '1';
                 editBtn.onmouseout = () => editBtn.style.opacity = '0.3';
                 editBtn.onclick = () => editMessage(chatId, m.id, i);
@@ -347,6 +409,7 @@ window.loadStageData = async function () {
             replyBtn.style.cursor = 'pointer';
             replyBtn.style.opacity = '0.3';
             replyBtn.style.marginRight = '10px';
+            replyBtn.title = 'Reply';
             replyBtn.onmouseover = () => replyBtn.style.opacity = '1';
             replyBtn.onmouseout = () => replyBtn.style.opacity = '0.3';
             replyBtn.onclick = () => replyMessage(chatId, i);
@@ -440,18 +503,43 @@ window.editMessage = async function (chatId, msgId, index) {
     }
 }
 
-window.handleTyping = function (chatId) {
-    const typingEl = document.getElementById(`typing-${chatId}`);
-    if (!typingEl) return;
+window.toggleEmojiPicker = function(id) {
+    const picker = document.getElementById(`emoji-picker-${id}`);
+    if (picker) {
+        picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
+    }
+}
 
-    const user = currentRole ? currentRole.toUpperCase() : 'USER';
-    typingEl.textContent = `${user} is typing...`;
+window.insertEmoji = function(id, emoji) {
+    const input = document.getElementById(`input-${id}`);
+    if (input) {
+        input.value += emoji;
+        input.focus();
+        handleTyping(id);
+    }
+    const picker = document.getElementById(`emoji-picker-${id}`);
+    if (picker) picker.style.display = 'none';
+}
+
+window.handleTyping = function (chatId) {
+    if (!currentRole) return;
+    
+    const now = Date.now();
+    const last = lastTypingUpdate[chatId] || 0;
+    const typingRef = doc(db, "typing", `${activeStageId}_${chatId}_${currentRole}`);
+
+    // Throttle updates to Firestore (max once every 2 seconds)
+    if (now - last > 2000) {
+        lastTypingUpdate[chatId] = now;
+        setDoc(typingRef, { stageId: activeStageId, chatId, user: currentRole, isTyping: true, timestamp: serverTimestamp() });
+    }
 
     if (typingTimers[chatId]) clearTimeout(typingTimers[chatId]);
 
     typingTimers[chatId] = setTimeout(() => {
-        typingEl.textContent = '';
-    }, 1000);
+        // Mark as not typing after 3 seconds of inactivity
+        setDoc(typingRef, { stageId: activeStageId, chatId, user: currentRole, isTyping: false, timestamp: serverTimestamp() });
+    }, 3000);
 }
 
 window.replyMessage = async function (chatId, index) {
@@ -925,9 +1013,39 @@ window.onload = async () => {
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
 };
 
+function playNotificationSound() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1000, ctx.currentTime);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+        console.error("Audio play failed", e);
+    }
+}
+
 async function initEncryption() {
-    cryptoKey = await window.crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
+    // Use a fixed secret so keys persist across reloads
+    const secret = "BIM-COLLAB-APP-SECRET-KEY";
+    const enc = new TextEncoder();
+    const keyData = await window.crypto.subtle.digest("SHA-256", enc.encode(secret));
+    cryptoKey = await window.crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "AES-GCM" },
         true,
         ["encrypt", "decrypt"]
     );

@@ -19,11 +19,11 @@
             <div class="header-right">
                 <select id="roleSelect">
                     <option value="" disabled selected>Select Role</option>
-                    <option value="architect">Architect</option>
-                    <option value="engineer">Engineer</option>
-                    <option value="contractor">Contractor</option>
-                    <option value="quantity">Quantity Surveyor</option>
-                    <option value="owner">Owner</option>
+                    <option value="architect" data-heading="Architect Dashboard">Architect</option>
+                    <option value="engineer" data-heading="Engineer Dashboard">Engineer</option>
+                    <option value="contractor" data-heading="Contractor Dashboard">Contractor</option>
+                    <option value="quantity" data-heading="Quantity Surveyor Dashboard">Quantity Surveyor</option>
+                    <option value="owner" data-heading="Owner Dashboard">Owner</option>
                 </select>
                 <button id="headerLogoutBtn" class="logout-btn" onclick="logout()" title="Logout" style="display: none;">
                     <i class="fas fa-sign-out-alt"></i>
@@ -44,11 +44,16 @@
         </aside>
 
         <section id="mainPanel">
-            <div class="card">
-                <div class="placeholder-box">
-                    <i class="fas fa-layer-group fa-4x placeholder-icon"></i>
-                    <h3>Welcome to the Project Hub</h3>
-                    <p class="placeholder-text">Select your role to initialize your specific workspace.</p>
+            <div id="dashboardHeader" style="display: none; margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0;">
+                <h2 id="dashboardTitle" style="margin: 0; color: var(--primary); font-size: 1.8rem; font-weight: 600;">Dashboard</h2>
+            </div>
+            <div id="workspaceContent">
+                <div class="card">
+                    <div class="placeholder-box">
+                        <i class="fas fa-layer-group fa-4x placeholder-icon"></i>
+                        <h3>Welcome to the Project Hub</h3>
+                        <p class="placeholder-text">Select your role to initialize your specific workspace.</p>
+                    </div>
                 </div>
             </div>
         </section>
