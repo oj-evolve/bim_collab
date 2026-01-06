@@ -48,12 +48,14 @@ const replyStates = {};
 const activeUploads = {};
 let lastSendTime = 0;
 let cryptoKey = null;
+let unreadCountC2 = 0;
 
 // Firebase Unsubscribe functions
 let unsubscribeMessages = null;
 let unsubscribeFiles = null;
 let unsubscribeTyping = null;
-let unsubscribeProfile = null;
+let unsubscribeAllProfiles = null;
+let unsubscribePinned = null;
 
 projectStages.forEach(s => {
     storage[s.id] = { c1: [], c2: [] };
@@ -62,6 +64,7 @@ projectStages.forEach(s => {
 
 // Initialize immediately
 setupFirebaseListeners(activeStageId);
+setupGlobalProfileListener();
 renderRoleSelectionPlaceholder();
 
 window.initStages = function () {
@@ -89,6 +92,7 @@ function setupFirebaseListeners(stageId) {
     if (unsubscribeMessages) unsubscribeMessages();
     if (unsubscribeFiles) unsubscribeFiles();
     if (unsubscribeTyping) unsubscribeTyping();
+    if (unsubscribePinned) unsubscribePinned();
 
     let isInitialLoad = true;
 
@@ -99,7 +103,19 @@ function setupFirebaseListeners(stageId) {
             snapshot.docChanges().forEach(change => {
                 if (change.type === "added") {
                     const d = change.doc.data();
-                    if (d.user !== currentRole) playNotificationSound();
+                    if (d.user !== currentRole) {
+                        if (!document.hasFocus()) playNotificationSound();
+                        if (d.chatId === 'c2') {
+                            const grid = document.getElementById('dashboardGrid');
+                            const badge = document.getElementById('badge-group-2');
+                            if (grid && !grid.classList.contains('view-secondary') && badge) badge.classList.add('active');
+                            if (grid && !grid.classList.contains('view-secondary') && badge) {
+                                unreadCountC2++;
+                                badge.textContent = unreadCountC2 > 99 ? '99+' : unreadCountC2;
+                                badge.classList.add('active');
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -164,6 +180,48 @@ function setupFirebaseListeners(stageId) {
             }
         });
     });
+
+    // Listen for Pinned Messages
+    const qPinned = query(collection(db, "pinned_messages"), where("stageId", "==", stageId));
+    unsubscribePinned = onSnapshot(qPinned, (snapshot) => {
+        ['c1', 'c2'].forEach(cid => {
+             const el = document.getElementById(`pinned-message-${cid}`);
+             if(el) el.style.display = 'none';
+        });
+
+        snapshot.docs.forEach(async doc => {
+            const data = doc.data();
+            const el = document.getElementById(`pinned-message-${data.chatId}`);
+            const contentEl = document.getElementById(`pinned-content-${data.chatId}`);
+            if (el && contentEl) {
+                let text = data.text;
+                if (data.isEncrypted) {
+                    text = await decryptData(data.text);
+                }
+                contentEl.innerHTML = `<i class="fas fa-thumbtack" style="margin-right:6px; font-size:0.7rem; color:var(--primary)"></i> <span style="font-size:0.75rem; font-weight:500">${escapeHtml(text)}</span>`;
+                el.style.display = 'flex';
+            }
+        });
+    });
+}
+
+function setupGlobalProfileListener() {
+    const q = collection(db, "profiles");
+    unsubscribeAllProfiles = onSnapshot(q, (snapshot) => {
+        snapshot.docs.forEach(doc => {
+            const role = doc.id;
+            const data = doc.data();
+            if (roleProfiles[role]) {
+                if (data.name) roleProfiles[role].name = data.name;
+                if (data.status) roleProfiles[role].status = data.status;
+                if (data.muteNotifications !== undefined) roleProfiles[role].muteNotifications = data.muteNotifications;
+            }
+            if (currentRole && role === currentRole) {
+                updateDashboardTitleAndSidebar();
+            }
+        });
+        loadStageData();
+    });
 }
 
 function updateDashboardTitleAndSidebar() {
@@ -193,39 +251,37 @@ function updateDashboardTitleAndSidebar() {
     if (roleProfiles[currentRole]) {
         if (sidebarName) sidebarName.textContent = roleProfiles[currentRole].name;
     }
+
+    const avatarEl = document.getElementById('userAvatar');
+    const initialsEl = document.getElementById('avatarInitials');
+    if (avatarEl && initialsEl && roleProfiles[currentRole]) {
+        const name = roleProfiles[currentRole].name;
+        const initials = name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+        initialsEl.textContent = initials;
+        avatarEl.style.display = 'flex';
+
+        const statusEl = document.getElementById('statusIndicator');
+        if (statusEl) {
+            statusEl.style.display = 'block';
+            statusEl.className = 'status-indicator ' + (roleProfiles[currentRole].status || 'online');
+        }
+    }
 }
 
 document.getElementById('roleSelect').onchange = (e) => {
     currentRole = e.target.value;
     
-    if (unsubscribeProfile) {
-        unsubscribeProfile();
-        unsubscribeProfile = null;
-    }
-
-    unsubscribeProfile = onSnapshot(doc(db, "profiles", currentRole), (docSnap) => {
-        if (docSnap.exists() && docSnap.data().name) {
-            roleProfiles[currentRole].name = docSnap.data().name;
-            updateDashboardTitleAndSidebar();
-        }
-    });
-
     updateDashboardTitleAndSidebar();
 
     renderWorkspace();
-    toggleLogoutButtons(true);
 };
 
 window.logout = function () {
-    if (!confirm('Are you sure you want to logout?')) return;
+    const modal = document.getElementById('logout-confirm-modal');
+    if (modal) modal.remove();
 
     currentRole = null;
     document.getElementById('roleSelect').value = "";
-
-    if (unsubscribeProfile) {
-        unsubscribeProfile();
-        unsubscribeProfile = null;
-    }
 
     const sidebarRole = document.getElementById('sidebarRoleDisplay');
     const sidebarName = document.getElementById('profileNameDisplay');
@@ -240,7 +296,15 @@ window.logout = function () {
     if (headerEl) headerEl.style.display = 'none';
     if (welcomeEl) welcomeEl.textContent = "";
 
-    toggleLogoutButtons(false);
+    const avatarEl = document.getElementById('userAvatar');
+    if (avatarEl) avatarEl.style.display = 'none';
+
+    const statusEl = document.getElementById('statusIndicator');
+    if (statusEl) statusEl.style.display = 'none';
+
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+
     renderRoleSelectionPlaceholder();
 
     // Close sidebar if open
@@ -249,11 +313,6 @@ window.logout = function () {
     if (mobileSidebar) mobileSidebar.classList.remove('open');
     if (sidebarOverlay) sidebarOverlay.classList.remove('active');
 };
-
-function toggleLogoutButtons(show) {
-    const btns = document.querySelectorAll('#headerLogoutBtn, .sidebar-logout-btn');
-    btns.forEach(btn => btn.style.display = show ? 'flex' : 'none');
-}
 
 function renderRoleSelectionPlaceholder() {
     const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
@@ -271,6 +330,8 @@ function renderRoleSelectionPlaceholder() {
 window.renderWorkspace = function () {
     const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
 
+    unreadCountC2 = 0;
+
     // Engineer and Contractor see a restricted UI
     const isRestricted = (currentRole === 'engineer' || currentRole === 'contractor');
 
@@ -283,24 +344,29 @@ window.renderWorkspace = function () {
                 `;
     } else {
         panel.innerHTML = `
-                    <div class="dashboard-grid grid-2">
-                        ${viewerNode('v1', 'Project View')}
-                        ${viewerNode('v2', 'Secondary View')}
-                        ${chatNode('c1', 'Main Stream', 'v1')}
-                        ${chatNode('c2', 'Private Channel', 'v2')}
+                    <div class="mobile-view-switcher">
+                        <button class="switch-btn active" id="btn-group-1" onclick="switchMobileGroup('group-1')">Main View</button>
+                        <button class="switch-btn" id="btn-group-2" onclick="switchMobileGroup('group-2')">Secondary View <span id="badge-group-2" class="switch-badge"></span></button>
+                    </div>
+                    <div class="dashboard-grid grid-2" id="dashboardGrid">
+                        ${viewerNode('v1', 'Project View', 'mobile-group-1')}
+                        ${viewerNode('v2', 'Secondary View', 'mobile-group-2')}
+                        ${chatNode('c1', 'Main Stream', 'v1', 'mobile-group-1')}
+                        ${chatNode('c2', 'Private Channel', 'v2', 'mobile-group-2')}
                     </div>
                 `;
     }
+    setupSwipeGestures();
     loadStageData();
 }
 
-window.viewerNode = function (id, title) {
+window.viewerNode = function (id, title, extraClass = '') {
     if (!viewerStates[id]) viewerStates[id] = { zoom: 1, rot: 0 };
 
     let toolbarStyle = "";
 
     return `
-                <div class="card">
+                <div class="card ${extraClass}">
                     <div class="card-header">
                         <span class="card-title">${title}</span>
                         <span style="font-size:0.6rem; opacity:0.5">${activeStageId.toUpperCase()}</span>
@@ -325,7 +391,7 @@ window.viewerNode = function (id, title) {
             `;
 }
 
-window.chatNode = function (id, title, vId) {
+window.chatNode = function (id, title, vId, extraClass = '') {
     const currentStageObj = projectStages.find(s => s.id === activeStageId);
     const stageName = currentStageObj ? currentStageObj.title : activeStageId;
 
@@ -333,18 +399,28 @@ window.chatNode = function (id, title, vId) {
     const emojiHtml = emojis.map(e => `<span style="cursor:pointer; font-size:1.2rem; padding:4px; user-select:none;" onclick="insertEmoji('${id}', '${e}')">${e}</span>`).join('');
 
     return `
-                <div class="card" ondragover="handleDragOver(event)" ondragenter="highlight(event)" ondragleave="unhighlight(event)" ondrop="handleDrop(event, '${id}', '${vId}')">
+                <div class="card ${extraClass}" ondragover="handleDragOver(event)" ondragenter="highlight(event)" ondragleave="unhighlight(event)" ondrop="handleDrop(event, '${id}', '${vId}')">
                     <div class="card-header">
-                        <span class="card-title">
-                            ${title}
-                            <span id="file-count-${id}" onclick="viewAllFiles('${id}', '${vId}')" style="cursor:pointer; font-size:0.6rem; background:var(--primary); color:white; padding:1px 6px; border-radius:10px; margin-left:6px; vertical-align:middle; display:none"></span>
-                        </span>
-                        <input type="text" id="search-${id}" placeholder="Search..." 
-                            class="search-input"
-                            oninput="loadStageData()">
+                        <div style="flex:1; display:flex; flex-direction:column; overflow:hidden; margin-right:0.5rem;">
+                            <div style="display:flex; align-items:center; overflow:hidden;">
+                                <span class="card-title" style="flex:0 1 auto; margin-right:0;">${title}</span>
+                                <span id="file-count-${id}" onclick="viewAllFiles('${id}', '${vId}')" style="cursor:pointer; font-size:0.6rem; background:var(--primary); color:white; padding:1px 6px; border-radius:10px; margin-left:6px; vertical-align:middle; display:none"></span>
+                            </div>
+                            <span id="typing-${id}" style="font-size:0.65rem; color:var(--primary); font-style:italic; min-height:14px; line-height:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <div style="position:relative;">
+                                <input type="text" id="search-${id}" placeholder="Search..." class="search-input" oninput="handleSearchInput('${id}')">
+                                <i id="search-clear-${id}" class="fas fa-times search-clear-btn" onclick="clearSearch('${id}')"></i>
+                            </div>
+                            <button onclick="clearChat('${id}')" title="Clear Chat" style="background:none; border:none; color:var(--text-muted); cursor:pointer;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--text-muted)'"><i class="fas fa-trash-alt"></i></button>
+                        </div>
+                    </div>
+                    <div id="pinned-message-${id}" class="pinned-message-banner" style="display:none">
+                        <div id="pinned-content-${id}" class="pinned-message-content" style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-right:1rem;"></div>
+                        <i class="fas fa-times" style="cursor:pointer; opacity:0.6; font-size:0.8rem" onclick="unpinMessage('${id}')" title="Unpin"></i>
                     </div>
                     <div class="chat-container" id="chat-box-${id}"></div>
-                    <div id="typing-${id}" style="height: 15px; font-size: 0.7rem; color: #888; padding-left: 10px; font-style: italic;"></div>
                     <div id="reply-preview-${id}" style="font-size: 0.7rem; color: var(--primary); padding-left: 10px; display:none; margin-bottom: 5px;"></div>
                     <div id="progress-container-${id}" style="display:none; padding: 0 10px; margin-bottom: 5px; align-items: center;">
                         <div style="flex: 1; height: 4px; background: #eee; border-radius: 2px; overflow: hidden;">
@@ -390,12 +466,15 @@ window.loadStageData = async function () {
         box.innerHTML = '';
 
         const messages = storage[activeStageId][chatId];
+        let hasResults = false;
+
         for (let i = 0; i < messages.length; i++) {
             const m = messages[i];
             let displayText = m.text;
             if (m.isEncrypted) displayText = await decryptData(m.text);
 
             if (term && !displayText.toLowerCase().includes(term) && !m.user.toLowerCase().includes(term)) continue;
+            hasResults = true;
 
             const msgDiv = document.createElement('div');
             msgDiv.className = 'message';
@@ -436,6 +515,18 @@ window.loadStageData = async function () {
                 msgDiv.appendChild(editBtn);
             }
 
+            const pinBtn = document.createElement('i');
+            pinBtn.className = 'fas fa-thumbtack';
+            pinBtn.style.float = 'right';
+            pinBtn.style.cursor = 'pointer';
+            pinBtn.style.opacity = '0.3';
+            pinBtn.style.marginRight = '10px';
+            pinBtn.title = 'Pin Message';
+            pinBtn.onmouseover = () => pinBtn.style.opacity = '1';
+            pinBtn.onmouseout = () => pinBtn.style.opacity = '0.3';
+            pinBtn.onclick = () => pinMessage(chatId, m.id);
+            msgDiv.appendChild(pinBtn);
+
             const replyBtn = document.createElement('i');
             replyBtn.className = 'fas fa-reply';
             replyBtn.style.float = 'right';
@@ -456,12 +547,46 @@ window.loadStageData = async function () {
                 timeSpan.textContent = m.time;
                 msgDiv.appendChild(timeSpan);
             }
+
+            const statusDot = document.createElement('span');
+            const uStatus = (roleProfiles[m.user] && roleProfiles[m.user].status) ? roleProfiles[m.user].status : 'offline';
+            statusDot.className = `chat-status-dot ${uStatus}`;
+            statusDot.title = uStatus.charAt(0).toUpperCase() + uStatus.slice(1);
+            msgDiv.appendChild(statusDot);
+
             const userStrong = document.createElement('strong');
             userStrong.textContent = m.user.toUpperCase();
             msgDiv.appendChild(userStrong);
-            msgDiv.appendChild(document.createTextNode(`: ${displayText}`));
+            
+            msgDiv.appendChild(document.createTextNode(': '));
+
+            if (term) {
+                const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                const parts = displayText.split(regex);
+                parts.forEach(part => {
+                    if (part.toLowerCase() === term) {
+                        const mark = document.createElement('span');
+                        mark.className = 'search-highlight';
+                        mark.textContent = part;
+                        msgDiv.appendChild(mark);
+                    } else {
+                        msgDiv.appendChild(document.createTextNode(part));
+                    }
+                });
+            } else {
+                msgDiv.appendChild(document.createTextNode(displayText));
+            }
+
             box.appendChild(msgDiv);
         }
+
+        if (term && !hasResults) {
+            const noResults = document.createElement('div');
+            noResults.style.cssText = 'text-align:center; padding:2rem; color:var(--text-muted); font-size:0.85rem; display:flex; flex-direction:column; align-items:center; opacity:0.7';
+            noResults.innerHTML = '<i class="fas fa-search" style="font-size:1.5rem; margin-bottom:0.5rem"></i>No results found';
+            box.appendChild(noResults);
+        }
+
         box.scrollTop = box.scrollHeight;
     }
 
@@ -482,6 +607,67 @@ window.loadStageData = async function () {
             setViewer(vId, last.url, last.name);
         }
     });
+}
+
+window.switchMobileGroup = function(group) {
+    const grid = document.getElementById('dashboardGrid');
+    const btn1 = document.getElementById('btn-group-1');
+    const btn2 = document.getElementById('btn-group-2');
+    
+    if (group === 'group-2') {
+        grid.classList.add('view-secondary');
+        btn1.classList.remove('active');
+        btn2.classList.add('active');
+
+        const badge = document.getElementById('badge-group-2');
+        if (badge) badge.classList.remove('active');
+        if (badge) {
+            badge.classList.remove('active');
+            badge.textContent = '';
+        }
+        unreadCountC2 = 0;
+    } else {
+        grid.classList.remove('view-secondary');
+        btn1.classList.add('active');
+        btn2.classList.remove('active');
+    }
+}
+
+function setupSwipeGestures() {
+    const grid = document.getElementById('dashboardGrid');
+    if (!grid) return;
+
+    let touchStartX = 0;
+    let touchEndX = 0;
+    let touchStartY = 0;
+    let touchEndY = 0;
+
+    grid.addEventListener('touchstart', e => {
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    grid.addEventListener('touchend', e => {
+        touchEndX = e.changedTouches[0].screenX;
+        touchEndY = e.changedTouches[0].screenY;
+        handleSwipe(e);
+    }, { passive: true });
+
+    function handleSwipe(e) {
+        if (window.innerWidth > 767) return;
+        
+        // Avoid conflict with viewer interactions (pan/zoom/rotate) and scrollable thumbs
+        if (e.target.closest('.viewer-container') || e.target.closest('.viewer-thumbs')) return;
+
+        const xDiff = touchStartX - touchEndX;
+        const yDiff = touchStartY - touchEndY;
+
+        // Ensure it's mostly horizontal swipe
+        if (Math.abs(xDiff) > Math.abs(yDiff) && Math.abs(xDiff) > 50) {
+            if (xDiff > 0) switchMobileGroup('group-2'); // Swipe Left
+            else switchMobileGroup('group-1'); // Swipe Right
+        }
+    }
 }
 
 window.send = async function (chatId) {
@@ -520,6 +706,40 @@ window.deleteMessage = async function (chatId, msgId) {
     if (confirm('Are you sure you want to delete this message?')) {
         await deleteDoc(doc(db, "messages", msgId));
     }
+}
+
+window.clearChat = async function (chatId) {
+    if (!currentRole) return;
+    if (!confirm('Are you sure you want to clear the entire chat history for this stage? This cannot be undone.')) return;
+
+    const msgs = storage[activeStageId][chatId];
+    if (!msgs || msgs.length === 0) return;
+
+    const deletePromises = msgs.map(m => deleteDoc(doc(db, "messages", m.id)));
+    try {
+        await Promise.all(deletePromises);
+    } catch (e) {
+        console.error("Error clearing chat:", e);
+        alert("Failed to clear chat.");
+    }
+}
+
+window.pinMessage = async function(chatId, msgId) {
+    const msgs = storage[activeStageId][chatId];
+    const msg = msgs.find(m => m.id === msgId);
+    if (!msg) return;
+
+    await setDoc(doc(db, "pinned_messages", `${activeStageId}_${chatId}`), {
+        stageId: activeStageId,
+        chatId: chatId,
+        text: msg.text,
+        isEncrypted: msg.isEncrypted,
+        timestamp: serverTimestamp()
+    });
+}
+
+window.unpinMessage = async function(chatId) {
+    await deleteDoc(doc(db, "pinned_messages", `${activeStageId}_${chatId}`));
 }
 
 window.editMessage = async function (chatId, msgId, index) {
@@ -1008,6 +1228,94 @@ window.openSettingsModal = function () {
     document.body.appendChild(modal);
 }
 
+window.toggleSettingsDropdown = function() {
+    const dropdown = document.getElementById('settingsDropdown');
+    const input = document.getElementById('settingsNameInput');
+    const statusSelect = document.getElementById('settingsStatusSelect');
+    const muteToggle = document.getElementById('settingsMuteToggle');
+    
+    if (!dropdown) return;
+    
+    if (dropdown.classList.contains('active')) {
+        dropdown.classList.remove('active');
+    } else {
+        dropdown.classList.add('active');
+        if (currentRole && roleProfiles[currentRole]) {
+            input.value = roleProfiles[currentRole].name;
+            if (statusSelect) statusSelect.value = roleProfiles[currentRole].status || 'online';
+            if (muteToggle) muteToggle.checked = !!roleProfiles[currentRole].muteNotifications;
+        }
+    }
+}
+
+window.saveSettingsFromDropdown = async function() {
+    const input = document.getElementById('settingsNameInput');
+    const statusSelect = document.getElementById('settingsStatusSelect');
+    const muteToggle = document.getElementById('settingsMuteToggle');
+    const saveBtn = document.querySelector('.dropdown-save-btn');
+
+    if (input && input.value.trim() !== "" && currentRole) {
+        const originalText = saveBtn ? saveBtn.textContent : 'Save Changes';
+        if (saveBtn) {
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+        }
+
+        const newName = input.value.trim();
+        const newStatus = statusSelect ? statusSelect.value : 'online';
+        const isMuted = muteToggle ? muteToggle.checked : false;
+        try {
+            await setDoc(doc(db, "profiles", currentRole), { name: newName, status: newStatus, muteNotifications: isMuted }, { merge: true });
+            toggleSettingsDropdown();
+        } catch (e) {
+            console.error("Error saving settings:", e);
+            alert("Failed to save settings.");
+        } finally {
+            if (saveBtn) {
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = false;
+            }
+        }
+    }
+}
+
+window.openLogoutConfirmationModal = function() {
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+
+    const modalId = 'logout-confirm-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '320px';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title">Confirm Logout</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem;">Are you sure you want to log out?</p>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.5rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.25rem; cursor:pointer; font-size:0.85rem;">Cancel</button>
+                <button onclick="logout()" style="padding:0.5rem 1rem; border:none; background:#ef4444; color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Logout</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
 window.saveSettings = async function() {
     const input = document.getElementById('settings-name-input');
     if (input && input.value.trim() !== "") {
@@ -1077,6 +1385,106 @@ window.openContactModal = function (e) {
     document.body.appendChild(modal);
 }
 
+window.openTermsModal = function (e) {
+    if (e) e.preventDefault();
+    const modalId = 'terms-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '600px';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.innerHTML = `<span class="card-title">Terms of Service</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.innerHTML = `
+        <div style="line-height: 1.6; color: var(--text-main); font-size: 0.9rem;">
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">1. Acceptance of Terms</h4>
+            <p style="margin-bottom: 1rem;">By accessing and using this BIM Viewer platform, you accept and agree to be bound by the terms and provision of this agreement.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Use License</h4>
+            <p style="margin-bottom: 1rem;">Permission is granted to temporarily download one copy of the materials (information or software) on OJ Evolve's website for personal, non-commercial transitory viewing only.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. Disclaimer</h4>
+            <p style="margin-bottom: 1rem;">The materials on OJ Evolve's website are provided "as is". OJ Evolve makes no warranties, expressed or implied, and hereby disclaims and negates all other warranties including, without limitation, implied warranties or conditions of merchantability, fitness for a particular purpose, or non-infringement of intellectual property or other violation of rights.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Limitations</h4>
+            <p style="margin-bottom: 0;">In no event shall OJ Evolve or its suppliers be liable for any damages (including, without limitation, damages for loss of data or profit, or due to business interruption) arising out of the use or inability to use the materials on OJ Evolve's website.</p>
+        </div>
+        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1rem; border-radius:0.25rem; cursor:pointer; font-weight:500">Close</button>
+        </div>
+    `;
+
+    card.appendChild(header);
+    card.appendChild(body);
+    modal.appendChild(card);
+
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+
+    document.body.appendChild(modal);
+}
+
+window.openPrivacyModal = function (e) {
+    if (e) e.preventDefault();
+    const modalId = 'privacy-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '600px';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.innerHTML = `<span class="card-title">Privacy Policy</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    body.innerHTML = `
+        <div style="line-height: 1.6; color: var(--text-main); font-size: 0.9rem;">
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">1. Information Collection</h4>
+            <p style="margin-bottom: 1rem;">We collect information you provide directly to us, such as when you create an account, update your profile, or communicate with us. This may include your name, email address, and role information.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Use of Information</h4>
+            <p style="margin-bottom: 1rem;">We use the information we collect to provide, maintain, and improve our services, including to facilitate collaboration within the BIM Viewer platform and to communicate with you.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. Data Security</h4>
+            <p style="margin-bottom: 1rem;">We implement appropriate technical and organizational measures to protect the security of your personal information. However, please note that no method of transmission over the Internet is 100% secure.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Cookies</h4>
+            <p style="margin-bottom: 0;">We use cookies and similar technologies to help us understand how you use our services and to improve your experience.</p>
+        </div>
+        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1rem; border-radius:0.25rem; cursor:pointer; font-weight:500">Close</button>
+        </div>
+    `;
+
+    card.appendChild(header);
+    card.appendChild(body);
+    modal.appendChild(card);
+
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+
+    document.body.appendChild(modal);
+}
+
 window.onload = async () => {
     if ('scrollRestoration' in history) {
         history.scrollRestoration = 'manual';
@@ -1095,11 +1503,20 @@ window.onload = async () => {
     const footer = document.createElement('footer');
     footer.className = 'footer';
     footer.innerHTML = `
-                <span>OJ Evolve @2025</span>
-                <span style="opacity:0.5">|</span>
+                <span>&copy; OJ Evolve ${new Date().getFullYear()}</span>
+                <span class="footer-sep">|</span>
                 <a href="#" onclick="openContactModal(event)" style="color:white; text-decoration:underline">Contact Us</a>
-                <span style="opacity:0.5">|</span>
-                <a href="#" style="color:white; text-decoration:underline">Privacy Policy</a>
+                <span class="footer-sep">|</span>
+                <a href="#" onclick="openTermsModal(event)" style="color:white; text-decoration:underline">Terms of Service</a>
+                <span class="footer-sep">|</span>
+                <a href="#" onclick="openPrivacyModal(event)" style="color:white; text-decoration:underline">Privacy Policy</a>
+                <span class="footer-sep">|</span>
+                <div class="footer-socials">
+                    <a href="#" title="LinkedIn"><i class="fab fa-linkedin"></i></a>
+                    <a href="#" title="Twitter"><i class="fab fa-twitter"></i></a>
+                    <a href="#" title="Facebook"><i class="fab fa-facebook"></i></a>
+                    <a href="#" title="Instagram"><i class="fab fa-instagram"></i></a>
+                </div>
             `;
     document.body.appendChild(footer);
 
@@ -1132,9 +1549,45 @@ window.onload = async () => {
     if (mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleSidebar);
     if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', toggleSidebar);
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
+
+    // Close dropdown when clicking outside
+    window.addEventListener('click', (e) => {
+        const dropdown = document.getElementById('settingsDropdown');
+        const avatar = document.getElementById('userAvatar');
+        if (dropdown && dropdown.classList.contains('active') && !dropdown.contains(e.target) && !avatar.contains(e.target)) {
+            dropdown.classList.remove('active');
+        }
+    });
+
+    // Keyboard shortcut for search (Ctrl+K)
+    window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            const searchC1 = document.getElementById('search-c1');
+            const searchC2 = document.getElementById('search-c2');
+            
+            if (document.activeElement === searchC1 && searchC2) {
+                searchC2.focus();
+            } else if (searchC1) {
+                searchC1.focus();
+            }
+        }
+
+        if (e.key === 'Escape') {
+            const active = document.activeElement;
+            if (active && active.classList.contains('search-input')) {
+                e.preventDefault();
+                active.value = '';
+                active.blur();
+                const chatId = active.id.replace('search-', '');
+                handleSearchInput(chatId);
+            }
+        }
+    });
 };
 
 function playNotificationSound() {
+    if (currentRole && roleProfiles[currentRole] && roleProfiles[currentRole].muteNotifications) return;
     try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (!AudioContext) return;

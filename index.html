@@ -25,10 +25,37 @@
                     <option value="quantity" data-heading="Quantity Surveyor Dashboard">Quantity Surveyor</option>
                     <option value="owner" data-heading="Owner Dashboard">Owner</option>
                 </select>
-                <button id="headerLogoutBtn" class="logout-btn" onclick="logout()" title="Logout" style="display: none;">
-                    <i class="fas fa-sign-out-alt"></i>
-                </button>
-                <button class="mobile-menu-btn" aria-label="Toggle navigation"><i class="fas fa-bars"></i></button>
+                <div class="avatar-wrapper">
+                    <div id="userAvatar" class="user-avatar" style="display: none;" onclick="toggleSettingsDropdown()" title="Settings">
+                        <span id="avatarInitials"></span>
+                    </div>
+                    <div id="statusIndicator" class="status-indicator online"></div>
+                    <div id="settingsDropdown" class="settings-dropdown">
+                        <div class="dropdown-header">
+                            <span>Settings</span>
+                            <i class="fas fa-times" style="cursor:pointer" onclick="toggleSettingsDropdown()"></i>
+                        </div>
+                        <div class="dropdown-body">
+                            <label style="font-size:0.75rem; color:var(--text-muted); font-weight:500; margin-bottom:4px; display:block;">Display Name</label>
+                            <input type="text" id="settingsNameInput" placeholder="Your Name" class="dropdown-input" onkeypress="if(event.key==='Enter') saveSettingsFromDropdown()">
+                            <label style="font-size:0.75rem; color:var(--text-muted); font-weight:500; margin-bottom:4px; display:block;">Status</label>
+                            <select id="settingsStatusSelect" class="dropdown-input" style="cursor:pointer">
+                                <option value="online">Online</option>
+                                <option value="away">Away</option>
+                                <option value="busy">Do Not Disturb</option>
+                            </select>
+                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem; padding: 0.25rem 0;">
+                                <label style="font-size:0.75rem; color:var(--text-muted); font-weight:500; cursor:pointer;" for="settingsMuteToggle">Mute Sounds</label>
+                                <input type="checkbox" id="settingsMuteToggle" style="cursor:pointer;">
+                            </div>
+                            <button onclick="saveSettingsFromDropdown()" class="dropdown-save-btn">Save Changes</button>
+                            <div style="height: 1px; background: var(--border); margin: 0.75rem 0;"></div>
+                            <button onclick="openLogoutConfirmationModal()" class="dropdown-logout-btn">
+                                <i class="fas fa-sign-out-alt"></i> Logout
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </header>
@@ -72,31 +99,5 @@
     </script>
     <script type="module" src="./src/app.js"></script>
     
-    <!-- Mobile Sidebar & Logic -->
-    <div class="mobile-sidebar-overlay" id="sidebarOverlay"></div>
-    <aside class="mobile-sidebar" id="mobileSidebar">
-        <div class="sidebar-header" style="background: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=600&q=80') center/cover no-repeat; color: white;">
-            <span class="sidebar-title">Menu</span>
-            <button class="close-sidebar-btn" id="closeSidebarBtn" aria-label="Close menu">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <div class="sidebar-profile">
-            <div class="profile-info">
-                <div class="profile-name" id="profileNameDisplay">Guest User</div>
-                <div class="profile-role" id="sidebarRoleDisplay">No Role Selected</div>
-            </div>
-        </div>
-        <div style="padding: 1rem; display: flex; flex-direction: column; gap: 1rem;">
-            <!-- Placeholder Navigation Items -->
-            <div style="font-weight: 500; color: var(--text-main);"><i class="fas fa-home" style="width: 24px;"></i> Dashboard</div>
-            <div style="font-weight: 500; color: var(--text-main);"><i class="fas fa-project-diagram" style="width: 24px;"></i> Projects</div>
-            <div style="font-weight: 500; color: var(--text-main); cursor: pointer;" onclick="openSettingsModal()"><i class="fas fa-cog" style="width: 24px;"></i> Settings</div>
-            <button class="sidebar-logout-btn" onclick="logout()" style="display: none;">
-                <i class="fas fa-sign-out-alt" style="width: 24px;"></i> Logout
-            </button>
-        </div>
-    </aside>
-
 </body>
 </html>
