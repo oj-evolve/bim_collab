@@ -406,13 +406,6 @@
             user-select: none;
         }
 
-        .message.own-message {
-            margin-left: auto;
-            border-left: none;
-            border-right: 3px solid var(--primary);
-            background-color: #eef2ff;
-        }
-
         .message.highlighted {
             background-color: rgba(79, 70, 229, 0.15) !important;
             transition: background-color 0.2s;
@@ -421,13 +414,29 @@
             background-color: #dbeafe !important;
         }
 
-        .message.marked-unread {
-            border-left: 3px solid #ef4444 !important;
-            background-color: #fff5f5 !important;
+        .unread-divider {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 0 1rem 0;
+            padding: 0.5rem 0;
+            color: var(--primary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            background: var(--bg-body);
+            z-index: 10;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
-        .message.own-message.marked-unread {
-            border-right: 3px solid #ef4444 !important;
-            border-left: none !important;
+        .unread-divider::before,
+        .unread-divider::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--primary);
+            opacity: 0.3;
+            margin: 0 10px;
         }
 
         .message-options-toolbar {
@@ -459,11 +468,11 @@
             color: var(--primary);
         }
 
-        .message-sender {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-            color: var(--primary);
+        .message.own-message {
+            margin-left: auto;
+            border-left: none;
+            border-right: 3px solid var(--primary);
+            background-color: #eef2ff;
         }
 
         .pinned-message-banner {

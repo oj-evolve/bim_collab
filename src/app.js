@@ -50,8 +50,10 @@ const activeUploads = {};
 let lastSendTime = 0;
 let cryptoKey = null;
 let unreadCountC2 = 0;
+let unreadCountC1 = 0;
 let activeToolbar = null;
-const localUnreadState = new Set();
+let sessionReadThresholds = {};
+let initializationPromise = null;
 
 // Firebase Unsubscribe functions
 let unsubscribeMessages = null;
@@ -83,6 +85,7 @@ window.initStages = function () {
 
 window.switchStage = function (id) {
     activeStageId = id;
+    sessionReadThresholds = {}; // Reset read thresholds on stage switch
     document.querySelectorAll('.stage').forEach(el => el.classList.remove('active'));
     const activeNav = document.getElementById(`nav-${id}`);
     if (activeNav) activeNav.classList.add('active');
@@ -109,13 +112,21 @@ function setupFirebaseListeners(stageId) {
                     const d = change.doc.data();
                     if (d.user !== currentRole) {
                         if (!document.hasFocus()) playNotificationSound();
+                        const grid = document.getElementById('dashboardGrid');
+
                         if (d.chatId === 'c2') {
-                            const grid = document.getElementById('dashboardGrid');
                             const badge = document.getElementById('badge-group-2');
-                            if (grid && !grid.classList.contains('view-secondary') && badge) badge.classList.add('active');
                             if (grid && !grid.classList.contains('view-secondary') && badge) {
                                 unreadCountC2++;
                                 badge.textContent = unreadCountC2 > 99 ? '99+' : unreadCountC2;
+                                badge.classList.add('active');
+                            }
+                        }
+                        if (d.chatId === 'c1') {
+                            const badge = document.getElementById('badge-group-1');
+                            if (grid && grid.classList.contains('view-secondary') && badge) {
+                                unreadCountC1++;
+                                badge.textContent = unreadCountC1 > 99 ? '99+' : unreadCountC1;
                                 badge.classList.add('active');
                             }
                         }
@@ -296,6 +307,7 @@ function updateDashboardTitleAndSidebar() {
 
 document.getElementById('roleSelect').onchange = (e) => {
     currentRole = e.target.value;
+    sessionReadThresholds = {}; // Reset read thresholds on role change
     
     updateDashboardTitleAndSidebar();
 
@@ -358,6 +370,7 @@ window.renderWorkspace = function () {
     const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
 
     unreadCountC2 = 0;
+    unreadCountC1 = 0;
 
     // Engineer and Contractor see a restricted UI
     const isRestricted = (currentRole === 'engineer' || currentRole === 'contractor');
@@ -372,7 +385,7 @@ window.renderWorkspace = function () {
     } else {
         panel.innerHTML = `
                     <div class="mobile-view-switcher">
-                        <button class="switch-btn active" id="btn-group-1" onclick="switchMobileGroup('group-1')">Main View</button>
+                        <button class="switch-btn active" id="btn-group-1" onclick="switchMobileGroup('group-1')">Main View <span id="badge-group-1" class="switch-badge"></span></button>
                         <button class="switch-btn" id="btn-group-2" onclick="switchMobileGroup('group-2')">Secondary View <span id="badge-group-2" class="switch-badge"></span></button>
                     </div>
                     <div class="dashboard-grid grid-2" id="dashboardGrid">
@@ -503,6 +516,16 @@ window.loadStageData = async function () {
         const messages = storage[activeStageId][chatId];
         let hasResults = false;
 
+        // Determine the read threshold for this session
+        const storageKey = `bim_last_read_${currentRole}_${activeStageId}_${chatId}`;
+        const sessionKey = `${activeStageId}_${chatId}`;
+        if (!sessionReadThresholds[sessionKey]) {
+            const stored = localStorage.getItem(storageKey);
+            sessionReadThresholds[sessionKey] = stored ? parseInt(stored) : Date.now();
+        }
+        const threshold = sessionReadThresholds[sessionKey];
+        let dividerInserted = false;
+
         for (let i = 0; i < messages.length; i++) {
             const m = messages[i];
             let displayText = m.text;
@@ -511,20 +534,37 @@ window.loadStageData = async function () {
             if (term && !displayText.toLowerCase().includes(term) && !m.user.toLowerCase().includes(term)) continue;
             hasResults = true;
 
+            // Check if we need to insert the "Unread" divider
+            if (!dividerInserted && !term) {
+                let msgTime = 0;
+                if (m.timestamp) {
+                    if (typeof m.timestamp.toMillis === 'function') msgTime = m.timestamp.toMillis();
+                    else if (m.timestamp.seconds) msgTime = m.timestamp.seconds * 1000;
+                    else if (m.timestamp instanceof Date) msgTime = m.timestamp.getTime();
+                } else {
+                    msgTime = Date.now(); // Handle pending writes
+                }
+
+                if (msgTime > threshold && m.user !== currentRole) {
+                    const divider = document.createElement('div');
+                    divider.className = 'unread-divider';
+                    divider.innerHTML = '<span>Unread Messages</span>';
+                    box.appendChild(divider);
+                    dividerInserted = true;
+
+                    setTimeout(() => {
+                        if (divider.isConnected) {
+                            divider.style.transition = 'opacity 0.5s';
+                            divider.style.opacity = '0';
+                            setTimeout(() => divider.remove(), 500);
+                        }
+                    }, 3000);
+                }
+            }
+
             const msgDiv = document.createElement('div');
             msgDiv.className = 'message';
             if (m.user === currentRole) msgDiv.classList.add('own-message');
-            if (localUnreadState.has(m.id)) msgDiv.classList.add('marked-unread');
-
-            if (m.forwarded) {
-                const fwdLabel = document.createElement('div');
-                fwdLabel.style.fontSize = '0.65rem';
-                fwdLabel.style.color = 'var(--text-muted)';
-                fwdLabel.style.fontStyle = 'italic';
-                fwdLabel.style.marginBottom = '2px';
-                fwdLabel.innerHTML = '<i class="fas fa-share" style="margin-right:4px"></i>Forwarded';
-                msgDiv.appendChild(fwdLabel);
-            }
 
             // Long press / Context Menu for Mobile Toolbar
             let touchTimer;
@@ -561,55 +601,6 @@ window.loadStageData = async function () {
                 msgDiv.appendChild(replyContext);
             }
 
-            if (m.user === currentRole) {
-                const delBtn = document.createElement('i');
-                delBtn.className = 'fas fa-trash';
-                delBtn.style.float = 'right';
-                delBtn.style.cursor = 'pointer';
-                delBtn.style.opacity = '0.3';
-                delBtn.title = 'Delete Message';
-                delBtn.onmouseover = () => delBtn.style.opacity = '1';
-                delBtn.onmouseout = () => delBtn.style.opacity = '0.3';
-                delBtn.onclick = () => deleteMessage(chatId, m.id);
-                msgDiv.appendChild(delBtn);
-
-                const editBtn = document.createElement('i');
-                editBtn.className = 'fas fa-edit';
-                editBtn.style.float = 'right';
-                editBtn.style.cursor = 'pointer';
-                editBtn.style.opacity = '0.3';
-                editBtn.style.marginRight = '10px';
-                editBtn.title = 'Edit Message';
-                editBtn.onmouseover = () => editBtn.style.opacity = '1';
-                editBtn.onmouseout = () => editBtn.style.opacity = '0.3';
-                editBtn.onclick = () => editMessage(chatId, m.id, i);
-                msgDiv.appendChild(editBtn);
-            }
-
-            const pinBtn = document.createElement('i');
-            pinBtn.className = 'fas fa-thumbtack';
-            pinBtn.style.float = 'right';
-            pinBtn.style.cursor = 'pointer';
-            pinBtn.style.opacity = '0.3';
-            pinBtn.style.marginRight = '10px';
-            pinBtn.title = 'Pin Message';
-            pinBtn.onmouseover = () => pinBtn.style.opacity = '1';
-            pinBtn.onmouseout = () => pinBtn.style.opacity = '0.3';
-            pinBtn.onclick = () => pinMessage(chatId, m.id);
-            msgDiv.appendChild(pinBtn);
-
-            const replyBtn = document.createElement('i');
-            replyBtn.className = 'fas fa-reply';
-            replyBtn.style.float = 'right';
-            replyBtn.style.cursor = 'pointer';
-            replyBtn.style.opacity = '0.3';
-            replyBtn.style.marginRight = '10px';
-            replyBtn.title = 'Reply';
-            replyBtn.onmouseover = () => replyBtn.style.opacity = '1';
-            replyBtn.onmouseout = () => replyBtn.style.opacity = '0.3';
-            replyBtn.onclick = () => replyMessage(chatId, i);
-            msgDiv.appendChild(replyBtn);
-
             const userStrong = document.createElement('strong');
             userStrong.textContent = m.user.toUpperCase();
             msgDiv.appendChild(userStrong);
@@ -639,6 +630,12 @@ window.loadStageData = async function () {
                 timeDiv.style.opacity = '0.5';
                 timeDiv.style.marginTop = '4px';
                 timeDiv.textContent = m.time;
+                if (m.edited) {
+                    const editedSpan = document.createElement('span');
+                    editedSpan.textContent = ' (edited)';
+                    editedSpan.style.fontStyle = 'italic';
+                    timeDiv.appendChild(editedSpan);
+                }
                 msgDiv.appendChild(timeDiv);
             }
 
@@ -651,6 +648,9 @@ window.loadStageData = async function () {
             noResults.innerHTML = '<i class="fas fa-search" style="font-size:1.5rem; margin-bottom:0.5rem"></i>No results found';
             box.appendChild(noResults);
         }
+
+        // Update the persistent last read time to now (so they are marked read for next session)
+        localStorage.setItem(storageKey, Date.now().toString());
 
         box.scrollTop = box.scrollHeight;
     }
@@ -674,6 +674,108 @@ window.loadStageData = async function () {
     });
 }
 
+window.showMessageToolbar = function(chatId, msgId, index, element, isOwn) {
+    if (activeToolbar) window.closeMessageToolbar();
+
+    element.classList.add('highlighted');
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'message-options-toolbar';
+    
+    // Quick Emojis (React/Reply)
+    const emojis = ['👍', '❤️', '😂'];
+    emojis.forEach(e => {
+        const span = document.createElement('span');
+        span.className = 'option-btn';
+        span.textContent = e;
+        span.onclick = (ev) => {
+            ev.stopPropagation();
+            // Quick reply with emoji
+            window.replyMessage(chatId, index);
+            const input = document.getElementById(`input-${chatId}`);
+            if(input) {
+                input.value = e;
+                window.send(chatId);
+            }
+            window.closeMessageToolbar();
+        };
+        toolbar.appendChild(span);
+    });
+
+    // Reply Icon
+    const replyBtn = document.createElement('i');
+    replyBtn.className = 'fas fa-reply option-btn';
+    replyBtn.style.marginLeft = '8px';
+    replyBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        window.replyMessage(chatId, index);
+        window.closeMessageToolbar();
+    };
+    toolbar.appendChild(replyBtn);
+
+    // Copy Icon
+    const copyBtn = document.createElement('i');
+    copyBtn.className = 'fas fa-copy option-btn';
+    copyBtn.style.marginLeft = '8px';
+    copyBtn.onclick = async (ev) => {
+        ev.stopPropagation();
+        const msg = storage[activeStageId][chatId][index];
+        if (msg) {
+            let text = msg.text;
+            if (msg.isEncrypted) text = await decryptData(msg.text);
+            navigator.clipboard.writeText(text).catch(err => console.error('Copy failed', err));
+        }
+        window.closeMessageToolbar();
+    };
+    toolbar.appendChild(copyBtn);
+
+    // Delete Icon (only if own message)
+    if (isOwn) {
+        const editBtn = document.createElement('i');
+        editBtn.className = 'fas fa-edit option-btn';
+        editBtn.style.marginLeft = '8px';
+        editBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            window.editMessage(chatId, msgId, index);
+            window.closeMessageToolbar();
+        };
+        toolbar.appendChild(editBtn);
+
+        const delBtn = document.createElement('i');
+        delBtn.className = 'fas fa-trash option-btn';
+        delBtn.style.color = '#ef4444';
+        delBtn.style.marginLeft = '8px';
+        delBtn.onclick = (ev) => {
+            ev.stopPropagation();
+            window.deleteMessage(chatId, msgId);
+            window.closeMessageToolbar();
+        };
+        toolbar.appendChild(delBtn);
+    }
+
+    document.body.appendChild(toolbar);
+    activeToolbar = { element, toolbar };
+
+    // Position toolbar above the message
+    const rect = element.getBoundingClientRect();
+    toolbar.style.top = `${rect.top - 55 + window.scrollY}px`;
+    toolbar.style.left = `${rect.left + (rect.width / 2)}px`;
+
+    // Close on click outside
+    setTimeout(() => {
+        document.addEventListener('click', window.closeMessageToolbar, { once: true });
+        document.addEventListener('scroll', window.closeMessageToolbar, { once: true });
+    }, 10);
+}
+
+window.closeMessageToolbar = function() {
+    if (activeToolbar) {
+        if (activeToolbar.element) activeToolbar.element.classList.remove('highlighted');
+        if (activeToolbar.toolbar) activeToolbar.toolbar.remove();
+        activeToolbar = null;
+    }
+}
+
 window.switchMobileGroup = function(group) {
     const grid = document.getElementById('dashboardGrid');
     const btn1 = document.getElementById('btn-group-1');
@@ -695,6 +797,13 @@ window.switchMobileGroup = function(group) {
         grid.classList.remove('view-secondary');
         btn1.classList.add('active');
         btn2.classList.remove('active');
+
+        const badge = document.getElementById('badge-group-1');
+        if (badge) {
+            badge.classList.remove('active');
+            badge.textContent = '';
+        }
+        unreadCountC1 = 0;
     }
 }
 
@@ -986,14 +1095,70 @@ window.editMessage = async function (chatId, msgId, index) {
     const msg = storage[activeStageId][chatId][index];
     if (msg.user !== currentRole) return;
     let currentText = msg.isEncrypted ? await decryptData(msg.text) : msg.text;
-    const newText = prompt('Edit message:', currentText);
-    if (newText !== null && newText.trim() !== "") {
-        const encrypted = await encryptData(newText.trim());
-        await updateDoc(doc(db, "messages", msgId), {
-            text: encrypted,
-            isEncrypted: true
-        });
-    }
+    
+    const modalId = 'edit-message-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.innerHTML = `<span class="card-title">Edit Message</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+
+    const textarea = document.createElement('textarea');
+    textarea.style.cssText = 'width:100%; padding:0.5rem; border:1px solid var(--border); border-radius:0.25rem; background:var(--bg-body); color:var(--text-main); resize:vertical; min-height:80px; font-family:inherit; margin-bottom:1rem;';
+    textarea.value = currentText;
+
+    const btnContainer = document.createElement('div');
+    btnContainer.style.cssText = 'display:flex; justify-content:flex-end; gap:10px;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:0.5rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.25rem; cursor:pointer; font-size:0.85rem;';
+    cancelBtn.onclick = () => modal.remove();
+
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    saveBtn.style.cssText = 'padding:0.5rem 1rem; border:none; background:var(--primary); color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;';
+    saveBtn.onclick = async () => {
+        const newText = textarea.value.trim();
+        if (newText !== "") {
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+            const encrypted = await encryptData(newText);
+            await updateDoc(doc(db, "messages", msgId), {
+                text: encrypted,
+                isEncrypted: true,
+                edited: true
+            });
+            modal.remove();
+        }
+    };
+
+    btnContainer.appendChild(cancelBtn);
+    btnContainer.appendChild(saveBtn);
+    body.appendChild(textarea);
+    body.appendChild(btnContainer);
+    card.appendChild(header);
+    card.appendChild(body);
+    modal.appendChild(card);
+
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+
+    document.body.appendChild(modal);
+    textarea.focus();
 }
 
 window.toggleEmojiPicker = function(id) {
@@ -1054,74 +1219,6 @@ window.cancelReply = function (chatId) {
         preview.style.display = 'none';
         preview.innerHTML = '';
     }
-}
-
-window.forwardMessage = async function(fromChatId, index) {
-    const msg = storage[activeStageId][fromChatId][index];
-    if (!msg) return;
-
-    let text = msg.text;
-    if (msg.isEncrypted) text = await decryptData(msg.text);
-
-    const modalId = 'forward-modal';
-    const existing = document.getElementById(modalId);
-    if (existing) existing.remove();
-
-    const modal = document.createElement('div');
-    modal.id = modalId;
-    modal.className = 'modal-overlay';
-
-    const card = document.createElement('div');
-    card.className = 'modal-card';
-    card.style.maxWidth = '300px';
-
-    const header = document.createElement('div');
-    header.className = 'modal-header';
-    header.innerHTML = `<span class="card-title">Forward to...</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
-
-    const body = document.createElement('div');
-    body.className = 'modal-body';
-
-    const targets = [
-        { id: 'c1', name: 'Main Stream' },
-        { id: 'c2', name: 'Private Channel' }
-    ];
-
-    targets.forEach(t => {
-        if (t.id === fromChatId) return;
-
-        const btn = document.createElement('button');
-        btn.style.cssText = 'width:100%; padding:12px; margin-bottom:8px; text-align:left; border:1px solid var(--border); background:var(--bg-body); border-radius:6px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; transition:background 0.2s;';
-        btn.innerHTML = `<span style="font-weight:500">${t.name}</span> <i class="fas fa-paper-plane" style="color:var(--primary)"></i>`;
-        
-        btn.onclick = async () => {
-            await window.processForward(t.id, text);
-            document.getElementById(modalId).remove();
-        };
-        body.appendChild(btn);
-    });
-
-    card.appendChild(header);
-    card.appendChild(body);
-    modal.appendChild(card);
-
-    modal.onclick = (e) => {
-        if (e.target === modal) modal.remove();
-    };
-    document.body.appendChild(modal);
-}
-
-window.processForward = async function(targetChatId, text) {
-    const encryptedText = await encryptData(text);
-    await addDoc(collection(db, "messages"), {
-        user: currentRole,
-        text: encryptedText,
-        isEncrypted: true,
-        stageId: activeStageId,
-        chatId: targetChatId,
-        timestamp: serverTimestamp(),
-        forwarded: true
-    });
 }
 
 window.cancelUpload = function(chatId) {
@@ -1924,41 +2021,164 @@ function playNotificationSound() {
 }
 
 async function initEncryption() {
-    // Use a fixed secret so keys persist across reloads
-    const secret = "BIM-COLLAB-APP-SECRET-KEY";
-    const enc = new TextEncoder();
-    const keyData = await window.crypto.subtle.digest("SHA-256", enc.encode(secret));
-    cryptoKey = await window.crypto.subtle.importKey(
-        "raw",
-        keyData,
-        { name: "AES-GCM" },
-        true,
-        ["encrypt", "decrypt"]
-    );
+    if (cryptoKey) return;
+
+    if (initializationPromise) return initializationPromise;
+
+    initializationPromise = (async () => {
+        let password = sessionStorage.getItem('bim_project_password');
+        if (!password) {
+            password = await new Promise((resolve) => {
+                const modalId = 'password-modal';
+                const existing = document.getElementById(modalId);
+                if (existing) existing.remove();
+
+                const modal = document.createElement('div');
+                modal.id = modalId;
+                modal.className = 'modal-overlay';
+                modal.style.zIndex = '9999';
+                modal.style.backdropFilter = 'blur(5px)';
+                modal.style.backgroundColor = 'rgba(0,0,0,0.8)';
+
+                const card = document.createElement('div');
+                card.className = 'modal-card';
+                card.style.maxWidth = '360px';
+                card.style.animation = 'fadeIn 0.3s ease-out';
+
+                const header = document.createElement('div');
+                header.className = 'modal-header';
+                header.innerHTML = `<span class="card-title"><i class="fas fa-lock" style="margin-right:8px; color:var(--primary)"></i>Project Security</span>`;
+
+                const body = document.createElement('div');
+                body.className = 'modal-body';
+                
+                const desc = document.createElement('p');
+                desc.style.cssText = 'font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem; line-height:1.5;';
+                desc.textContent = 'This project is end-to-end encrypted. Please enter the project key to access the workspace.';
+
+                const inputContainer = document.createElement('div');
+                inputContainer.style.cssText = 'position:relative; margin-bottom:1rem;';
+
+                const input = document.createElement('input');
+                input.type = 'password';
+                input.value = 'bim-collab-secure-2024';
+                input.placeholder = 'Enter password';
+                input.onblur = () => input.style.borderColor = 'var(--border)';
+
+                const toggleIcon = document.createElement('i');
+                toggleIcon.className = 'fas fa-eye';
+                toggleIcon.style.cssText = 'position:absolute; right:12px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--text-muted); font-size:0.9rem;';
+                toggleIcon.onclick = () => {
+                    const type = input.type === 'password' ? 'text' : 'password';
+                    input.type = type;
+                    toggleIcon.className = type === 'password' ? 'fas fa-eye' : 'fas fa-eye-slash';
+                };
+
+                inputContainer.appendChild(input);
+                inputContainer.appendChild(toggleIcon);
+
+                const btn = document.createElement('button');
+                btn.textContent = 'Unlock Workspace';
+                btn.style.cssText = 'width:100%; background:var(--primary); color:white; border:none; padding:0.75rem; border-radius:0.375rem; cursor:pointer; font-weight:600; font-size:0.95rem; transition: opacity 0.2s;';
+                btn.onmouseover = () => btn.style.opacity = '0.9';
+                btn.onmouseout = () => btn.style.opacity = '1';
+
+                const submit = () => {
+                    if (input.value.trim()) {
+                        modal.remove();
+                        resolve(input.value.trim());
+                    }
+                };
+
+                btn.onclick = submit;
+                input.onkeypress = (e) => {
+                    if (e.key === 'Enter') submit();
+                };
+
+                body.appendChild(desc);
+                body.appendChild(inputContainer);
+                body.appendChild(btn);
+                card.appendChild(header);
+                card.appendChild(body);
+                modal.appendChild(card);
+                document.body.appendChild(modal);
+                
+                setTimeout(() => input.focus(), 50);
+            });
+
+            if (password) sessionStorage.setItem('bim_project_password', password);
+            else {
+                initializationPromise = null;
+                return;
+            }
+        }
+
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey(
+            "raw",
+            enc.encode(password),
+            { name: "PBKDF2" },
+            false,
+            ["deriveBits", "deriveKey"]
+        );
+
+        // Using a static salt for this demo to ensure all users derive the same key
+        const salt = enc.encode("bim-viewer-shared-salt");
+
+        cryptoKey = await window.crypto.subtle.deriveKey(
+            {
+                name: "PBKDF2",
+                salt: salt,
+                iterations: 100000,
+                hash: "SHA-256"
+            },
+            keyMaterial,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    })();
+
+    await initializationPromise;
 }
 
 async function encryptData(text) {
-    const enc = new TextEncoder();
+    if (!cryptoKey) await initEncryption();
+    if (!cryptoKey) throw new Error("Encryption key not available");
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await window.crypto.subtle.encrypt(
+    const encoded = new TextEncoder().encode(text);
+    const encrypted = await window.crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
         cryptoKey,
-        enc.encode(text)
+        encoded
     );
-    return { iv: Array.from(iv), data: Array.from(new Uint8Array(ciphertext)) };
+    const encryptedArray = new Uint8Array(encrypted);
+    const buf = new Uint8Array(iv.length + encryptedArray.length);
+    buf.set(iv);
+    buf.set(encryptedArray, iv.length);
+    
+    let binary = '';
+    for (let i = 0; i < buf.length; i++) {
+        binary += String.fromCharCode(buf[i]);
+    }
+    return btoa(binary);
 }
 
-async function decryptData(cipherObj) {
+async function decryptData(encryptedText) {
+    if (!cryptoKey) await initEncryption();
+    if (!cryptoKey) return "*** Key Missing ***";
     try {
-        const iv = new Uint8Array(cipherObj.iv);
-        const data = new Uint8Array(cipherObj.data);
+        const data = new Uint8Array(atob(encryptedText).split("").map(c => c.charCodeAt(0)));
+        const iv = data.slice(0, 12);
+        const encrypted = data.slice(12);
         const decrypted = await window.crypto.subtle.decrypt(
             { name: "AES-GCM", iv: iv },
             cryptoKey,
-            data
+            encrypted
         );
         return new TextDecoder().decode(decrypted);
     } catch (e) {
-        return "[Encrypted]";
+        console.error("Decryption failed", e);
+        return "*** Encrypted Content ***";
     }
 }
