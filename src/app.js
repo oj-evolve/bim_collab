@@ -121,6 +121,10 @@ function setupFirebaseListeners(stageId) {
                                 badge.textContent = unreadCountC2 > 99 ? '99+' : unreadCountC2;
                                 badge.classList.add('active');
                             }
+                            if (grid && !grid.classList.contains('view-secondary')) {
+                                const notif = document.getElementById('notif-right');
+                                if (notif) notif.style.display = 'block';
+                            }
                         }
                         if (d.chatId === 'c1') {
                             const badge = document.getElementById('badge-group-1');
@@ -128,6 +132,10 @@ function setupFirebaseListeners(stageId) {
                                 unreadCountC1++;
                                 badge.textContent = unreadCountC1 > 99 ? '99+' : unreadCountC1;
                                 badge.classList.add('active');
+                            }
+                            if (grid && grid.classList.contains('view-secondary')) {
+                                const notif = document.getElementById('notif-left');
+                                if (notif) notif.style.display = 'block';
                             }
                         }
                     }
@@ -372,6 +380,14 @@ window.renderWorkspace = function () {
     unreadCountC2 = 0;
     unreadCountC1 = 0;
 
+    const notifLeft = document.getElementById('notif-left');
+    const notifRight = document.getElementById('notif-right');
+    if (notifLeft) notifLeft.style.display = 'none';
+    if (notifRight) notifRight.style.display = 'none';
+
+    const toggle = document.getElementById('viewToggle');
+    if (toggle) toggle.style.display = ''; // Reset to default (CSS handles mobile/desktop)
+
     // Engineer and Contractor see a restricted UI
     const isRestricted = (currentRole === 'engineer' || currentRole === 'contractor');
 
@@ -382,12 +398,9 @@ window.renderWorkspace = function () {
                         ${chatNode('c1', 'Main Stream', 'v1')}
                     </div>
                 `;
+        if (toggle) toggle.style.display = 'none'; // Hide toggle for restricted roles
     } else {
         panel.innerHTML = `
-                    <div class="mobile-view-switcher">
-                        <button class="switch-btn active" id="btn-group-1" onclick="switchMobileGroup('group-1')">Main View <span id="badge-group-1" class="switch-badge"></span></button>
-                        <button class="switch-btn" id="btn-group-2" onclick="switchMobileGroup('group-2')">Secondary View <span id="badge-group-2" class="switch-badge"></span></button>
-                    </div>
                     <div class="dashboard-grid grid-2" id="dashboardGrid">
                         ${viewerNode('v1', 'Project View', 'mobile-group-1')}
                         ${viewerNode('v2', 'Secondary View', 'mobile-group-2')}
@@ -457,8 +470,9 @@ window.chatNode = function (id, title, vId, extraClass = '') {
                             <span id="typing-${id}" style="font-size:0.65rem; color:var(--primary); font-style:italic; min-height:14px; line-height:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
                         </div>
                         <div style="display:flex; align-items:center; gap:5px;">
-                            <div style="position:relative;">
-                                <input type="text" id="search-${id}" placeholder="Search..." class="search-input" oninput="handleSearchInput('${id}')">
+                            <div class="search-wrapper" id="search-wrapper-${id}">
+                                <i class="fas fa-search search-toggle-icon" onclick="toggleSearch('${id}')" title="Search"></i>
+                                <input type="text" id="search-${id}" placeholder="Search..." class="search-input" oninput="handleSearchInput('${id}')" onblur="checkSearchBlur('${id}')">
                                 <i id="search-clear-${id}" class="fas fa-times search-clear-btn" onclick="clearSearch('${id}')"></i>
                             </div>
                             ${ownerControls}
@@ -492,6 +506,43 @@ window.chatNode = function (id, title, vId, extraClass = '') {
                     </div>
                 </div>
             `;
+}
+
+window.toggleSearch = function(chatId) {
+    const wrapper = document.getElementById(`search-wrapper-${chatId}`);
+    const input = document.getElementById(`search-${chatId}`);
+    if (wrapper && input) {
+        wrapper.classList.add('expanded');
+        input.focus();
+    }
+}
+
+window.checkSearchBlur = function(chatId) {
+    setTimeout(() => {
+        const wrapper = document.getElementById(`search-wrapper-${chatId}`);
+        const input = document.getElementById(`search-${chatId}`);
+        if (wrapper && input && !input.value && document.activeElement !== input) {
+            wrapper.classList.remove('expanded');
+        }
+    }, 200);
+}
+
+window.handleSearchInput = function(chatId) {
+    const input = document.getElementById(`search-${chatId}`);
+    const clearBtn = document.getElementById(`search-clear-${chatId}`);
+    if (clearBtn && input) {
+        clearBtn.style.display = input.value ? 'block' : 'none';
+    }
+    loadStageData();
+}
+
+window.clearSearch = function(chatId) {
+    const input = document.getElementById(`search-${chatId}`);
+    if (input) {
+        input.value = '';
+        handleSearchInput(chatId);
+        input.focus(); // Keep focus to prevent collapse
+    }
 }
 
 window.loadStageData = async function () {
@@ -778,13 +829,11 @@ window.closeMessageToolbar = function() {
 
 window.switchMobileGroup = function(group) {
     const grid = document.getElementById('dashboardGrid');
-    const btn1 = document.getElementById('btn-group-1');
-    const btn2 = document.getElementById('btn-group-2');
+    const toggle = document.getElementById('viewToggle');
     
     if (group === 'group-2') {
         grid.classList.add('view-secondary');
-        btn1.classList.remove('active');
-        btn2.classList.add('active');
+        if (toggle) toggle.classList.add('active');
 
         const badge = document.getElementById('badge-group-2');
         if (badge) badge.classList.remove('active');
@@ -793,10 +842,11 @@ window.switchMobileGroup = function(group) {
             badge.textContent = '';
         }
         unreadCountC2 = 0;
+        const notif = document.getElementById('notif-right');
+        if (notif) notif.style.display = 'none';
     } else {
         grid.classList.remove('view-secondary');
-        btn1.classList.add('active');
-        btn2.classList.remove('active');
+        if (toggle) toggle.classList.remove('active');
 
         const badge = document.getElementById('badge-group-1');
         if (badge) {
@@ -804,6 +854,8 @@ window.switchMobileGroup = function(group) {
             badge.textContent = '';
         }
         unreadCountC1 = 0;
+        const notif = document.getElementById('notif-left');
+        if (notif) notif.style.display = 'none';
     }
 }
 
@@ -1942,6 +1994,15 @@ window.onload = async () => {
         } else {
             backToTop.classList.remove('visible');
         }
+
+        const dashboardHeader = document.getElementById('dashboardHeader');
+        if (dashboardHeader) {
+            if (window.scrollY > 10) {
+                dashboardHeader.classList.add('scrolled');
+            } else {
+                dashboardHeader.classList.remove('scrolled');
+            }
+        }
     });
 
     // Mobile Sidebar Logic
@@ -1958,6 +2019,17 @@ window.onload = async () => {
     if (mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleSidebar);
     if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', toggleSidebar);
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', toggleSidebar);
+
+    // Header Toggle Logic
+    const viewToggle = document.getElementById('viewToggle');
+    if (viewToggle) {
+        viewToggle.addEventListener('click', () => {
+            const grid = document.getElementById('dashboardGrid');
+            if (!grid) return;
+            const isSecondary = grid.classList.contains('view-secondary');
+            switchMobileGroup(isSecondary ? 'group-1' : 'group-2');
+        });
+    }
 
     // Close dropdown when clicking outside
     window.addEventListener('click', (e) => {

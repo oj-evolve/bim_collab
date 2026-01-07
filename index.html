@@ -75,9 +75,27 @@
         </aside>
 
         <section id="mainPanel">
-            <div id="dashboardHeader" style="display: none; margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0;">
-                <div id="welcomeMsg" style="font-size: 0.9rem; color: #666; margin-bottom: 0.2rem;"></div>
-                <h2 id="dashboardTitle" style="margin: 0; color: var(--primary); font-size: 1.8rem; font-weight: 600;">Dashboard</h2>
+            <div id="dashboardHeader">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div id="welcomeMsg" style="font-size: 0.9rem; color: #666; margin-bottom: 0.2rem;"></div>
+                        <h2 id="dashboardTitle" style="margin: 0; color: var(--primary); font-size: 1.8rem; font-weight: 600;">Dashboard</h2>
+                    </div>
+                    <div id="viewToggle">
+                        <svg width="60" height="40" viewBox="0 0 60 40">
+                            <rect width="60" height="40" rx="20" fill="#2196F3" />
+                            <circle id="notif-left" cx="12" cy="20" r="4" fill="#ef4444" style="display:none"></circle>
+                            <circle id="notif-right" cx="48" cy="20" r="4" fill="#ef4444" style="display:none"></circle>
+                            <circle class="toggle-knob" cx="19.5" cy="20" r="19.5" fill="white"></circle>
+                        </svg>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+                            <span style="font-size: 0.6rem; color: var(--text-muted); font-weight: 600;">Main Stream</span>
+                            <i class="fas fa-arrow-right toggle-arrow" style="font-size: 0.7rem; color: var(--text-muted); opacity: 0.6;"></i>
+                            <span style="font-size: 0.6rem; color: var(--text-muted); font-weight: 600;">Private Channel</span>
+                        </div>
+                        <span class="tooltip-text">Toggle Main/Secondary View</span>
+                    </div>
+                </div>
             </div>
             <div id="workspaceContent">
                 <div class="card">
@@ -102,6 +120,5 @@
         }
     </script>
     <script type="module" src="./src/app.js"></script>
-    
 </body>
 </html>
