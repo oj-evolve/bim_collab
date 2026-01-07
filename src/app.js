@@ -50,6 +50,8 @@ const activeUploads = {};
 let lastSendTime = 0;
 let cryptoKey = null;
 let unreadCountC2 = 0;
+let activeToolbar = null;
+const localUnreadState = new Set();
 
 // Firebase Unsubscribe functions
 let unsubscribeMessages = null;
@@ -511,6 +513,42 @@ window.loadStageData = async function () {
 
             const msgDiv = document.createElement('div');
             msgDiv.className = 'message';
+            if (m.user === currentRole) msgDiv.classList.add('own-message');
+            if (localUnreadState.has(m.id)) msgDiv.classList.add('marked-unread');
+
+            if (m.forwarded) {
+                const fwdLabel = document.createElement('div');
+                fwdLabel.style.fontSize = '0.65rem';
+                fwdLabel.style.color = 'var(--text-muted)';
+                fwdLabel.style.fontStyle = 'italic';
+                fwdLabel.style.marginBottom = '2px';
+                fwdLabel.innerHTML = '<i class="fas fa-share" style="margin-right:4px"></i>Forwarded';
+                msgDiv.appendChild(fwdLabel);
+            }
+
+            // Long press / Context Menu for Mobile Toolbar
+            let touchTimer;
+            let touchStartX, touchStartY;
+
+            msgDiv.addEventListener('touchstart', (e) => {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                touchTimer = setTimeout(() => {
+                    showMessageToolbar(chatId, m.id, i, msgDiv, m.user === currentRole);
+                    if (navigator.vibrate) navigator.vibrate(50);
+                }, 600);
+            }, {passive: true});
+            msgDiv.addEventListener('touchend', () => clearTimeout(touchTimer));
+            msgDiv.addEventListener('touchmove', (e) => {
+                const diffX = Math.abs(e.touches[0].clientX - touchStartX);
+                const diffY = Math.abs(e.touches[0].clientY - touchStartY);
+                if (diffX > 10 || diffY > 10) clearTimeout(touchTimer);
+            }, {passive: true});
+            msgDiv.oncontextmenu = (e) => {
+                e.preventDefault();
+                showMessageToolbar(chatId, m.id, i, msgDiv, m.user === currentRole);
+                return false;
+            };
 
             if (m.replyTo) {
                 const replyContext = document.createElement('div');
@@ -572,21 +610,6 @@ window.loadStageData = async function () {
             replyBtn.onclick = () => replyMessage(chatId, i);
             msgDiv.appendChild(replyBtn);
 
-            if (m.time) {
-                const timeSpan = document.createElement('span');
-                timeSpan.style.fontSize = '0.7rem';
-                timeSpan.style.opacity = '0.5';
-                timeSpan.style.marginRight = '5px';
-                timeSpan.textContent = m.time;
-                msgDiv.appendChild(timeSpan);
-            }
-
-            const statusDot = document.createElement('span');
-            const uStatus = (roleProfiles[m.user] && roleProfiles[m.user].status) ? roleProfiles[m.user].status : 'offline';
-            statusDot.className = `chat-status-dot ${uStatus}`;
-            statusDot.title = uStatus.charAt(0).toUpperCase() + uStatus.slice(1);
-            msgDiv.appendChild(statusDot);
-
             const userStrong = document.createElement('strong');
             userStrong.textContent = m.user.toUpperCase();
             msgDiv.appendChild(userStrong);
@@ -608,6 +631,15 @@ window.loadStageData = async function () {
                 });
             } else {
                 msgDiv.appendChild(document.createTextNode(displayText));
+            }
+
+            if (m.time) {
+                const timeDiv = document.createElement('div');
+                timeDiv.style.fontSize = '0.65rem';
+                timeDiv.style.opacity = '0.5';
+                timeDiv.style.marginTop = '4px';
+                timeDiv.textContent = m.time;
+                msgDiv.appendChild(timeDiv);
             }
 
             box.appendChild(msgDiv);
@@ -1022,6 +1054,74 @@ window.cancelReply = function (chatId) {
         preview.style.display = 'none';
         preview.innerHTML = '';
     }
+}
+
+window.forwardMessage = async function(fromChatId, index) {
+    const msg = storage[activeStageId][fromChatId][index];
+    if (!msg) return;
+
+    let text = msg.text;
+    if (msg.isEncrypted) text = await decryptData(msg.text);
+
+    const modalId = 'forward-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '300px';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    header.innerHTML = `<span class="card-title">Forward to...</span><i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+
+    const targets = [
+        { id: 'c1', name: 'Main Stream' },
+        { id: 'c2', name: 'Private Channel' }
+    ];
+
+    targets.forEach(t => {
+        if (t.id === fromChatId) return;
+
+        const btn = document.createElement('button');
+        btn.style.cssText = 'width:100%; padding:12px; margin-bottom:8px; text-align:left; border:1px solid var(--border); background:var(--bg-body); border-radius:6px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; transition:background 0.2s;';
+        btn.innerHTML = `<span style="font-weight:500">${t.name}</span> <i class="fas fa-paper-plane" style="color:var(--primary)"></i>`;
+        
+        btn.onclick = async () => {
+            await window.processForward(t.id, text);
+            document.getElementById(modalId).remove();
+        };
+        body.appendChild(btn);
+    });
+
+    card.appendChild(header);
+    card.appendChild(body);
+    modal.appendChild(card);
+
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
+window.processForward = async function(targetChatId, text) {
+    const encryptedText = await encryptData(text);
+    await addDoc(collection(db, "messages"), {
+        user: currentRole,
+        text: encryptedText,
+        isEncrypted: true,
+        stageId: activeStageId,
+        chatId: targetChatId,
+        timestamp: serverTimestamp(),
+        forwarded: true
+    });
 }
 
 window.cancelUpload = function(chatId) {
