@@ -811,9 +811,9 @@
 
         /* Header View Toggle (Mobile Only) */
         #viewToggle { display: none; cursor: pointer; flex-direction: column; align-items: center; position: relative; }
-        #viewToggle rect { transition: fill 0.3s ease; fill: #2196F3; }
+        #viewToggle rect { transition: fill 0.3s ease; fill: #4f46e5; }
         #viewToggle .toggle-knob { transition: transform 0.3s ease; }
-        #viewToggle.active rect { fill: #4CAF50; }
+        #viewToggle.active rect { fill: #2196F3; }
         #viewToggle.active .toggle-knob { transform: translateX(21px); }
         #viewToggle .toggle-arrow { transition: transform 0.3s ease; }
         #viewToggle.active .toggle-arrow { transform: rotate(180deg); }
