@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, deleteDoc, doc, updateDoc, serverTimestamp, setDoc, writeBatch, getDocs } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, uploadBytesResumable } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 
@@ -39,6 +39,14 @@ const roleProfiles = {
     owner: { name: "David", icon: "fa-user-tie" }
 };
 
+const defaultRoleProfiles = {
+    architect: { name: "Kelly de Boss", icon: "fa-pen-ruler" },
+    engineer: { name: "Mike", icon: "fa-hard-hat" },
+    contractor: { name: "John", icon: "fa-truck" },
+    quantity: { name: "Emily", icon: "fa-calculator" },
+    owner: { name: "David", icon: "fa-user-tie" }
+};
+
 const storage = {};
 const archivedStorage = {};
 const files = {};
@@ -54,6 +62,9 @@ let unreadCountC1 = 0;
 let activeToolbar = null;
 let sessionReadThresholds = {};
 let initializationPromise = null;
+let currentProjectName = "BIM COLLAB";
+let currentProjectId = localStorage.getItem('bim_project_id') || 'default';
+let showProjectOverview = false;
 
 // Firebase Unsubscribe functions
 let unsubscribeMessages = null;
@@ -61,6 +72,8 @@ let unsubscribeFiles = null;
 let unsubscribeTyping = null;
 let unsubscribeAllProfiles = null;
 let unsubscribePinned = null;
+let unsubscribeProjectSettings = null;
+let unsubscribeProjectsList = null;
 
 projectStages.forEach(s => {
     storage[s.id] = { c1: [], c2: [] };
@@ -71,6 +84,8 @@ projectStages.forEach(s => {
 // Initialize immediately
 setupFirebaseListeners(activeStageId);
 setupGlobalProfileListener();
+setupProjectSettingsListener();
+setupProjectsListListener();
 renderRoleSelectionPlaceholder();
 
 window.initStages = function () {
@@ -104,7 +119,7 @@ function setupFirebaseListeners(stageId) {
     let isInitialLoad = true;
 
     // Listen for Messages
-    const qMsg = query(collection(db, "messages"), where("stageId", "==", stageId), orderBy("timestamp", "asc"));
+    const qMsg = query(collection(db, "messages"), where("projectId", "==", currentProjectId), where("stageId", "==", stageId), orderBy("timestamp", "asc"));
     unsubscribeMessages = onSnapshot(qMsg, (snapshot) => {
         if (!isInitialLoad && currentRole) {
             snapshot.docChanges().forEach(change => {
@@ -180,7 +195,7 @@ function setupFirebaseListeners(stageId) {
     });
 
     // Listen for Files
-    const qFiles = query(collection(db, "files"), where("stageId", "==", stageId), orderBy("timestamp", "asc"));
+    const qFiles = query(collection(db, "files"), where("projectId", "==", currentProjectId), where("stageId", "==", stageId), orderBy("timestamp", "asc"));
     unsubscribeFiles = onSnapshot(qFiles, (snapshot) => {
         files[stageId] = { v1: [], v2: [] };
         snapshot.docs.forEach(doc => {
@@ -200,7 +215,7 @@ function setupFirebaseListeners(stageId) {
     });
 
     // Listen for Typing Status
-    const qTyping = query(collection(db, "typing"), where("stageId", "==", stageId), where("isTyping", "==", true));
+    const qTyping = query(collection(db, "typing"), where("projectId", "==", currentProjectId), where("stageId", "==", stageId), where("isTyping", "==", true));
     unsubscribeTyping = onSnapshot(qTyping, (snapshot) => {
         const typingMap = {};
         snapshot.docs.forEach(doc => {
@@ -222,7 +237,7 @@ function setupFirebaseListeners(stageId) {
     });
 
     // Listen for Pinned Messages
-    const qPinned = query(collection(db, "pinned_messages"), where("stageId", "==", stageId));
+    const qPinned = query(collection(db, "pinned_messages"), where("projectId", "==", currentProjectId), where("stageId", "==", stageId));
     unsubscribePinned = onSnapshot(qPinned, (snapshot) => {
         ['c1', 'c2'].forEach(cid => {
              const el = document.getElementById(`pinned-message-${cid}`);
@@ -246,7 +261,7 @@ function setupFirebaseListeners(stageId) {
 }
 
 function setupGlobalProfileListener() {
-    const q = collection(db, "profiles");
+    const q = collection(db, "projects", currentProjectId, "profiles");
     unsubscribeAllProfiles = onSnapshot(q, (snapshot) => {
         snapshot.docs.forEach(doc => {
             const role = doc.id;
@@ -255,17 +270,42 @@ function setupGlobalProfileListener() {
                 if (data.name) roleProfiles[role].name = data.name;
                 if (data.status) roleProfiles[role].status = data.status;
                 if (data.muteNotifications !== undefined) roleProfiles[role].muteNotifications = data.muteNotifications;
-                if (data.darkMode !== undefined) roleProfiles[role].darkMode = data.darkMode;
+                if (data.theme) roleProfiles[role].theme = data.theme;
+                else if (data.darkMode !== undefined) roleProfiles[role].theme = data.darkMode ? 'dark' : 'light';
             }
             if (currentRole && role === currentRole) {
                 updateDashboardTitleAndSidebar();
                 // Apply dark mode setting immediately
-                if (roleProfiles[role].darkMode !== undefined) {
-                    document.body.classList.toggle('dark-mode', roleProfiles[role].darkMode);
+                if (roleProfiles[role].theme) {
+                    applyTheme(roleProfiles[role].theme);
                 }
             }
         });
         loadStageData();
+    });
+}
+
+function setupProjectSettingsListener() {
+    if (unsubscribeProjectSettings) unsubscribeProjectSettings();
+    unsubscribeProjectSettings = onSnapshot(doc(db, "projects", currentProjectId), (docSnapshot) => {
+        // Ensure App Name is fixed
+        const logoText = document.querySelector('.logo span');
+        if (logoText) logoText.textContent = "BIM COLLAB";
+
+        if (docSnapshot.exists()) {
+            const data = docSnapshot.data();
+            if (data.name) {
+                currentProjectName = data.name;
+                const projectText = document.getElementById('headerProjectName');
+                if (projectText) projectText.textContent = data.name;
+                document.title = `BIM COLLAB - ${data.name}`;
+            }
+        } else if (currentProjectId === 'default') {
+            currentProjectName = "Default Project";
+            const projectText = document.getElementById('headerProjectName');
+            if (projectText) projectText.textContent = currentProjectName;
+            document.title = "BIM COLLAB";
+        }
     });
 }
 
@@ -311,6 +351,11 @@ function updateDashboardTitleAndSidebar() {
             statusEl.className = 'status-indicator ' + (roleProfiles[currentRole].status || 'online');
         }
     }
+
+    const projectText = document.getElementById('headerProjectName');
+    if (projectText) {
+        projectText.style.display = currentRole === 'owner' ? 'block' : 'none';
+    }
 }
 
 document.getElementById('roleSelect').onchange = (e) => {
@@ -352,6 +397,9 @@ window.logout = function () {
     if (dropdown) dropdown.classList.remove('active');
     document.body.classList.remove('dark-mode'); // Reset to light mode on logout
 
+    const projectText = document.getElementById('headerProjectName');
+    if (projectText) projectText.style.display = 'none';
+
     renderRoleSelectionPlaceholder();
 
     // Close sidebar if open
@@ -377,6 +425,11 @@ function renderRoleSelectionPlaceholder() {
 window.renderWorkspace = function () {
     const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
 
+    if (currentRole === 'owner' && showProjectOverview) {
+        renderProjectOverview(panel);
+        return;
+    }
+
     unreadCountC2 = 0;
     unreadCountC1 = 0;
 
@@ -391,6 +444,11 @@ window.renderWorkspace = function () {
     // Engineer and Contractor see a restricted UI
     const isRestricted = (currentRole === 'engineer' || currentRole === 'contractor');
 
+    let projectsBtn = '';
+    if (currentRole === 'owner') {
+        projectsBtn = `<button onclick="toggleProjectOverview()" style="margin-bottom: 1rem; padding: 0.5rem 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 0.5rem; cursor: pointer; color: var(--primary); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem;"><i class="fas fa-th-large"></i> View All Projects</button>`;
+    }
+
     if (isRestricted) {
         panel.innerHTML = `
                     <div class="dashboard-grid grid-1-only">
@@ -401,6 +459,7 @@ window.renderWorkspace = function () {
         if (toggle) toggle.style.display = 'none'; // Hide toggle for restricted roles
     } else {
         panel.innerHTML = `
+                    ${projectsBtn}
                     <div class="dashboard-grid grid-2" id="dashboardGrid">
                         ${viewerNode('v1', 'Project View', 'mobile-group-1')}
                         ${viewerNode('v2', 'Secondary View', 'mobile-group-2')}
@@ -904,10 +963,16 @@ window.send = async function (chatId) {
     lastSendTime = now;
 
     const input = document.getElementById(`input-${chatId}`);
-    if (!input.value.trim()) return;
-    const encryptedText = await encryptData(input.value);
+    const textToSend = input.value;
+    if (!textToSend.trim()) return;
+
+    input.value = "";
+    input.focus();
+
+    const encryptedText = await encryptData(textToSend);
     const msg = {
         user: currentRole,
+        projectId: currentProjectId,
         text: encryptedText,
         isEncrypted: true,
         stageId: activeStageId,
@@ -920,8 +985,6 @@ window.send = async function (chatId) {
     }
 
     await addDoc(collection(db, "messages"), msg);
-
-    input.value = "";
 
     const typingEl = document.getElementById(`typing-${chatId}`);
     if (typingEl) typingEl.textContent = '';
@@ -1132,6 +1195,7 @@ window.pinMessage = async function(chatId, msgId) {
 
     await setDoc(doc(db, "pinned_messages", `${activeStageId}_${chatId}`), {
         stageId: activeStageId,
+        projectId: currentProjectId,
         chatId: chatId,
         text: msg.text,
         isEncrypted: msg.isEncrypted,
@@ -1236,19 +1300,20 @@ window.handleTyping = function (chatId) {
     
     const now = Date.now();
     const last = lastTypingUpdate[chatId] || 0;
-    const typingRef = doc(db, "typing", `${activeStageId}_${chatId}_${currentRole}`);
+    // Unique ID per project/stage/chat/user
+    const typingRef = doc(db, "typing", `${currentProjectId}_${activeStageId}_${chatId}_${currentRole}`);
 
     // Throttle updates to Firestore (max once every 2 seconds)
     if (now - last > 2000) {
         lastTypingUpdate[chatId] = now;
-        setDoc(typingRef, { stageId: activeStageId, chatId, user: currentRole, isTyping: true, timestamp: serverTimestamp() });
+        setDoc(typingRef, { projectId: currentProjectId, stageId: activeStageId, chatId, user: currentRole, isTyping: true, timestamp: serverTimestamp() });
     }
 
     if (typingTimers[chatId]) clearTimeout(typingTimers[chatId]);
 
     typingTimers[chatId] = setTimeout(() => {
         // Mark as not typing after 3 seconds of inactivity
-        setDoc(typingRef, { stageId: activeStageId, chatId, user: currentRole, isTyping: false, timestamp: serverTimestamp() });
+        setDoc(typingRef, { projectId: currentProjectId, stageId: activeStageId, chatId, user: currentRole, isTyping: false, timestamp: serverTimestamp() });
     }, 3000);
 }
 
@@ -1336,6 +1401,7 @@ window.handleFile = async function (chatId, vId, input) {
                         const url = await getDownloadURL(uploadTask.snapshot.ref);
                         await addDoc(collection(db, "files"), {
                             stageId: activeStageId,
+                            projectId: currentProjectId,
                             viewId: vId,
                             name: file.name,
                             url: url,
@@ -1371,6 +1437,7 @@ window.handleFile = async function (chatId, vId, input) {
 
         await addDoc(collection(db, "messages"), {
             stageId: activeStageId,
+            projectId: currentProjectId,
             chatId: chatId,
             user: currentRole,
             text: encryptedText,
@@ -1689,8 +1756,11 @@ window.toggleSettingsDropdown = function() {
     const dropdown = document.getElementById('settingsDropdown');
     const input = document.getElementById('settingsNameInput');
     const statusSelect = document.getElementById('settingsStatusSelect');
+    const themeToggle = document.getElementById('settingsThemeToggle');
     const muteToggle = document.getElementById('settingsMuteToggle');
-    const darkModeToggle = document.getElementById('settingsDarkModeToggle');
+    const projectContainer = document.getElementById('ownerProjectNameContainer');
+    const projectManagement = document.getElementById('projectManagementSection');
+    const projectInput = document.getElementById('settingsProjectNameInput');
     
     if (!dropdown) return;
     
@@ -1701,8 +1771,23 @@ window.toggleSettingsDropdown = function() {
         if (currentRole && roleProfiles[currentRole]) {
             input.value = roleProfiles[currentRole].name;
             if (statusSelect) statusSelect.value = roleProfiles[currentRole].status || 'online';
+            if (themeToggle) themeToggle.checked = roleProfiles[currentRole].theme === 'dark';
             if (muteToggle) muteToggle.checked = !!roleProfiles[currentRole].muteNotifications;
-            if (darkModeToggle) darkModeToggle.checked = !!roleProfiles[currentRole].darkMode;
+            
+            if (currentRole === 'owner' && projectContainer) {
+                projectContainer.style.display = 'block';
+                if (projectManagement) {
+                    projectManagement.style.display = 'block';
+                    const deleteBtn = projectManagement.querySelector('button[onclick="deleteProject()"]');
+                    if (deleteBtn) {
+                        deleteBtn.style.display = currentProjectId === 'default' ? 'none' : 'block';
+                    }
+                }
+                if (projectInput) projectInput.value = currentProjectName;
+            } else if (projectContainer) {
+                projectContainer.style.display = 'none';
+                if (projectManagement) projectManagement.style.display = 'none';
+            }
         }
     }
 }
@@ -1710,8 +1795,9 @@ window.toggleSettingsDropdown = function() {
 window.saveSettingsFromDropdown = async function() {
     const input = document.getElementById('settingsNameInput');
     const statusSelect = document.getElementById('settingsStatusSelect');
+    const themeToggle = document.getElementById('settingsThemeToggle');
     const muteToggle = document.getElementById('settingsMuteToggle');
-    const darkModeToggle = document.getElementById('settingsDarkModeToggle');
+    const projectInput = document.getElementById('settingsProjectNameInput');
     const saveBtn = document.querySelector('.dropdown-save-btn');
 
     if (input && input.value.trim() !== "" && currentRole) {
@@ -1723,10 +1809,18 @@ window.saveSettingsFromDropdown = async function() {
 
         const newName = input.value.trim();
         const newStatus = statusSelect ? statusSelect.value : 'online';
+        const newTheme = themeToggle && themeToggle.checked ? 'dark' : 'light';
         const isMuted = muteToggle ? muteToggle.checked : false;
-        const isDarkMode = darkModeToggle ? darkModeToggle.checked : false;
         try {
-            await setDoc(doc(db, "profiles", currentRole), { name: newName, status: newStatus, muteNotifications: isMuted, darkMode: isDarkMode }, { merge: true });
+            await setDoc(doc(db, "projects", currentProjectId, "profiles", currentRole), { name: newName, status: newStatus, muteNotifications: isMuted, theme: newTheme }, { merge: true });
+            
+            if (currentRole === 'owner' && projectInput) {
+                const newProjectName = projectInput.value.trim();
+                if (newProjectName) {
+                    await setDoc(doc(db, "projects", currentProjectId), { name: newProjectName }, { merge: true });
+                }
+            }
+            
             toggleSettingsDropdown();
         } catch (e) {
             console.error("Error saving settings:", e);
@@ -1783,7 +1877,7 @@ window.saveSettings = async function() {
         const newName = input.value.trim();
         
         try {
-            await setDoc(doc(db, "profiles", currentRole), { name: newName }, { merge: true });
+            await setDoc(doc(db, "projects", currentProjectId, "profiles", currentRole), { name: newName }, { merge: true });
             document.getElementById('settings-modal').remove();
         } catch (e) {
             console.error("Error saving settings:", e);
@@ -2040,6 +2134,40 @@ window.onload = async () => {
         }
     });
 
+    // Settings Toggles - Immediate Effect
+    const themeToggle = document.getElementById('settingsThemeToggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('change', async (e) => {
+            if (currentRole) {
+                const newTheme = e.target.checked ? 'dark' : 'light';
+                applyTheme(newTheme);
+                if (roleProfiles[currentRole]) roleProfiles[currentRole].theme = newTheme;
+                
+                try {
+                    await setDoc(doc(db, "projects", currentProjectId, "profiles", currentRole), { theme: newTheme }, { merge: true });
+                } catch (err) {
+                    console.error("Error saving theme:", err);
+                }
+            }
+        });
+    }
+
+    const muteToggle = document.getElementById('settingsMuteToggle');
+    if (muteToggle) {
+        muteToggle.addEventListener('change', async (e) => {
+            if (currentRole) {
+                const isMuted = e.target.checked;
+                if (roleProfiles[currentRole]) roleProfiles[currentRole].muteNotifications = isMuted;
+                
+                try {
+                    await setDoc(doc(db, "projects", currentProjectId, "profiles", currentRole), { muteNotifications: isMuted }, { merge: true });
+                } catch (err) {
+                    console.error("Error saving mute setting:", err);
+                }
+            }
+        });
+    }
+
     // Keyboard shortcut for search (Ctrl+K)
     window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -2252,5 +2380,525 @@ async function decryptData(encryptedText) {
     } catch (e) {
         console.error("Decryption failed", e);
         return "*** Encrypted Content ***";
+    }
+}
+
+function applyTheme(theme) {
+    if (theme === 'system') {
+        const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.body.classList.toggle('dark-mode', systemDark);
+    } else {
+        document.body.classList.toggle('dark-mode', theme === 'dark');
+    }
+}
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    if (currentRole && roleProfiles[currentRole]?.theme === 'system') {
+        document.body.classList.toggle('dark-mode', e.matches);
+    }
+});
+
+/* --- Multi-Project Management --- */
+
+function setupProjectsListListener() {
+    if (unsubscribeProjectsList) unsubscribeProjectsList();
+    const q = query(collection(db, "projects"), orderBy("createdAt", "desc"));
+    unsubscribeProjectsList = onSnapshot(q, (snapshot) => {
+        const select = document.getElementById('projectSelect');
+        if (!select) return;
+        
+        select.innerHTML = '';
+        
+        let projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        if (!projects.find(p => p.id === 'default')) {
+            projects.push({ id: 'default', name: 'Default Project' });
+        }
+        
+        const sortedDocs = projects.sort((a, b) => {
+            if (a.id === 'default') return -1;
+            if (b.id === 'default') return 1;
+            return 0;
+        });
+
+        sortedDocs.forEach(data => {
+            const opt = document.createElement('option');
+            opt.value = data.id;
+            opt.textContent = data.name || "Default Project";
+            if (data.id === currentProjectId) opt.selected = true;
+            select.appendChild(opt);
+        });
+    });
+}
+
+window.switchProject = function(projectId) {
+    if (projectId === currentProjectId) return;
+    
+    showProjectOverview = false;
+    currentProjectId = projectId;
+    localStorage.setItem('bim_project_id', projectId);
+    
+    // Reset state for new project
+    activeStageId = 's1';
+    sessionReadThresholds = {};
+    initStages();
+    
+    // Reset Role Profiles to defaults to avoid data leak from previous project
+    Object.keys(defaultRoleProfiles).forEach(role => {
+        roleProfiles[role] = { ...defaultRoleProfiles[role] };
+    });
+
+    // Unsubscribe existing listeners
+    if (unsubscribeMessages) unsubscribeMessages();
+    if (unsubscribeFiles) unsubscribeFiles();
+    if (unsubscribeTyping) unsubscribeTyping();
+    if (unsubscribePinned) unsubscribePinned();
+    if (unsubscribeAllProfiles) unsubscribeAllProfiles();
+    if (unsubscribeProjectSettings) unsubscribeProjectSettings();
+
+    // Clear local data caches
+    projectStages.forEach(s => {
+        storage[s.id] = { c1: [], c2: [] };
+        archivedStorage[s.id] = { c1: [], c2: [] };
+        files[s.id] = { v1: [], v2: [] };
+    });
+
+    // Re-initialize
+    setupFirebaseListeners(activeStageId);
+    setupGlobalProfileListener();
+    setupProjectSettingsListener();
+    
+    // Refresh UI
+    updateDashboardTitleAndSidebar();
+    renderWorkspace();
+    
+    // Close settings
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+}
+
+window.createProject = function() {
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+    openCreateProjectModal();
+}
+
+window.openCreateProjectModal = function() {
+    const modalId = 'create-project-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+    modal.style.zIndex = '3000';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+    card.style.animation = 'fadeIn 0.2s ease-out';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title"><i class="fas fa-plus-circle" style="color:var(--primary); margin-right:8px;"></i>New Project</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body">
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Enter a name for your new project workspace.</p>
+            <input type="text" id="new-project-name" placeholder="Project Name (e.g. Sky Tower Phase 1)" style="width:100%; padding:0.75rem; border:1px solid var(--border); border-radius:0.5rem; background:var(--bg-body); color:var(--text-main); margin-bottom:1rem; font-size:0.95rem;" onkeypress="if(event.key==='Enter') performProjectCreation()">
+            <textarea id="new-project-desc" placeholder="Description (Optional)" style="width:100%; padding:0.75rem; border:1px solid var(--border); border-radius:0.5rem; background:var(--bg-body); color:var(--text-main); margin-bottom:1.5rem; font-size:0.95rem; resize:vertical; min-height:80px; font-family:inherit;"></textarea>
+            <div style="display:flex; gap:10px; justify-content:flex-end; width:100%;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.75rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.5rem; cursor:pointer; font-weight:600; color:var(--text-main);">Cancel</button>
+                <button onclick="performProjectCreation()" style="padding:0.75rem 1.5rem; border:none; background:var(--primary); color:white; border-radius:0.5rem; cursor:pointer; font-weight:600; box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.3);">Create Project</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+    
+    setTimeout(() => {
+        const input = document.getElementById('new-project-name');
+        if(input) input.focus();
+    }, 50);
+}
+
+window.performProjectCreation = async function() {
+    const input = document.getElementById('new-project-name');
+    const descInput = document.getElementById('new-project-desc');
+    if (!input || !input.value.trim()) return;
+    
+    const name = input.value.trim();
+    const description = descInput ? descInput.value.trim() : '';
+    const modal = document.getElementById('create-project-modal');
+    const btn = modal ? modal.querySelector('button[onclick^="performProjectCreation"]') : null;
+    
+    if (btn) {
+        btn.textContent = 'Creating...';
+        btn.disabled = true;
+    }
+
+    try {
+        const batch = writeBatch(db);
+        const newProjectRef = doc(collection(db, "projects"));
+        
+        batch.set(newProjectRef, { name: name, description: description, createdAt: serverTimestamp(), owner: currentRole });
+        
+        // Initialize profiles for the new project
+        Object.keys(defaultRoleProfiles).forEach(role => {
+            const profileRef = doc(db, "projects", newProjectRef.id, "profiles", role);
+            batch.set(profileRef, { ...defaultRoleProfiles[role] });
+        });
+
+        await batch.commit();
+        
+        if (modal) modal.remove();
+        switchProject(newProjectRef.id);
+    } catch (e) {
+        console.error("Error creating project:", e);
+        alert("Failed to create project.");
+        if (btn) {
+            btn.textContent = 'Create Project';
+            btn.disabled = false;
+        }
+    }
+}
+
+window.deleteProject = function() {
+    if (currentRole !== 'owner') return;
+    
+    if (currentProjectId === 'default') {
+        alert("The default project cannot be deleted.");
+        return;
+    }
+
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+
+    openDeleteProjectModal(currentProjectId, currentProjectName);
+}
+
+window.toggleProjectOverview = function() {
+    showProjectOverview = !showProjectOverview;
+    renderWorkspace();
+}
+
+async function renderProjectOverview(panel) {
+    panel.innerHTML = `
+        <div style="margin-bottom:1rem;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+                <button onclick="toggleProjectOverview()" style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:5px;"><i class="fas fa-arrow-left"></i> Back to Dashboard</button>
+                <button onclick="createProject()" style="padding:0.5rem 1rem; background:var(--primary); color:white; border:none; border-radius:0.5rem; cursor:pointer; font-weight:600;">+ New Project</button>
+            </div>
+            <div style="position:relative;">
+                <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
+                <input type="text" placeholder="Search projects..." style="width:100%; padding:0.75rem 0.75rem 0.75rem 2.5rem; border:1px solid var(--border); border-radius:0.5rem; background:var(--bg-card); color:var(--text-main); font-size:0.9rem;" oninput="filterProjectList(this.value)">
+            </div>
+        </div>
+        <div id="project-list-container" class="dashboard-grid grid-2">
+            <div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">Loading projects...</div>
+        </div>
+    `;
+    
+    const container = document.getElementById('project-list-container');
+    
+    try {
+        const snapshot = await getDocs(query(collection(db, "projects"), orderBy("createdAt", "desc")));
+        
+        if (snapshot.empty) {
+            container.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:2rem; color:var(--text-muted);">No projects found.</div>`;
+            return;
+        }
+        
+        container.innerHTML = '';
+        
+        let projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        if (!projects.find(p => p.id === 'default')) {
+            projects.push({ id: 'default', name: 'Default Project', createdAt: null });
+        }
+
+        const sortedDocs = projects.sort((a, b) => {
+            if (a.id === 'default') return -1;
+            if (b.id === 'default') return 1;
+            return 0;
+        });
+
+        sortedDocs.forEach(data => {
+            const isCurrent = data.id === currentProjectId;
+            const date = data.createdAt ? data.createdAt.toDate().toLocaleDateString() : 'N/A';
+            
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.style.cssText = `position:relative; transition:transform 0.2s; ${isCurrent ? 'border:2px solid var(--primary);' : ''}`;
+            if (!isCurrent) {
+                card.onmouseover = () => card.style.transform = 'translateY(-2px)';
+                card.onmouseout = () => card.style.transform = 'translateY(0)';
+            }
+            
+            card.innerHTML = `
+                <div class="card-header">
+                    <span class="card-title" style="font-size:1rem;">${escapeHtml(data.name || 'Default Project')}</span>
+                    ${isCurrent ? '<span style="font-size:0.6rem; background:var(--primary); color:white; padding:2px 6px; border-radius:4px;">ACTIVE</span>' : ''}
+                </div>
+                <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; padding:1.5rem 0; opacity:0.8; cursor:pointer;" onclick="switchProject('${data.id}')">
+                    <i class="fas fa-building" style="font-size:2.5rem; margin-bottom:0.75rem; color:var(--text-muted);"></i>
+                    <div style="font-size:0.8rem; color:var(--text-muted);">Created: ${date}</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:1rem; border-top:1px solid var(--border); padding-top:1rem;">
+                    <button onclick="switchProject('${data.id}')" style="flex:1; padding:0.5rem; background:var(--bg-body); color:var(--primary); border:1px solid var(--border); border-radius:0.25rem; cursor:pointer; font-weight:500;">${isCurrent ? 'Current' : 'Open'}</button>
+                    ${data.id !== 'default' ? `<button onclick="deleteProjectById('${data.id}', '${escapeHtml(data.name || 'Project')}')" style="padding:0.5rem 0.75rem; background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); border-radius:0.25rem; cursor:pointer;" title="Delete Project"><i class="fas fa-trash"></i></button>` : ''}
+                </div>
+            `;
+            container.appendChild(card);
+        });
+        
+    } catch (e) {
+        console.error("Error loading projects:", e);
+        container.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:#ef4444;">Failed to load projects.</div>`;
+    }
+}
+
+window.deleteProjectById = function(id, name) {
+    openDeleteProjectModal(id, name);
+}
+
+window.renameProject = function() {
+    const input = document.getElementById('settingsProjectNameInput');
+    if (!input || !input.value.trim()) return;
+    
+    const newName = input.value.trim();
+    openRenameConfirmationModal(newName);
+}
+
+window.openRenameConfirmationModal = function(newName) {
+    const modalId = 'rename-project-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+    modal.style.zIndex = '3000';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+    card.style.animation = 'fadeIn 0.2s ease-out';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title">Confirm Rename</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body">
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1.5rem;">
+                Are you sure you want to rename this project to <strong>"${escapeHtml(newName)}"</strong>?
+            </p>
+            <div style="display:flex; gap:10px; justify-content:flex-end; width:100%;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.75rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.5rem; cursor:pointer; font-weight:600; color:var(--text-main);">Cancel</button>
+                <button onclick="performProjectRename()" style="padding:0.75rem 1.5rem; border:none; background:var(--primary); color:white; border-radius:0.5rem; cursor:pointer; font-weight:600;">Rename</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
+window.performProjectRename = async function() {
+    const input = document.getElementById('settingsProjectNameInput');
+    if (!input) return;
+    const newName = input.value.trim();
+    
+    const modal = document.getElementById('rename-project-modal');
+    const btn = modal ? modal.querySelector('button[onclick^="performProjectRename"]') : null;
+    
+    if (btn) {
+        btn.textContent = 'Renaming...';
+        btn.disabled = true;
+    }
+
+    const settingsBtn = input.nextElementSibling;
+    const originalText = settingsBtn ? settingsBtn.textContent : 'Rename';
+    if (settingsBtn) {
+        settingsBtn.textContent = '...';
+        settingsBtn.disabled = true;
+    }
+
+    try {
+        await setDoc(doc(db, "projects", currentProjectId), { name: newName }, { merge: true });
+        
+        if (modal) modal.remove();
+        
+        if (settingsBtn) {
+            settingsBtn.textContent = 'Done';
+            setTimeout(() => {
+                settingsBtn.textContent = 'Rename';
+                settingsBtn.disabled = false;
+            }, 1500);
+        }
+    } catch (e) {
+        console.error("Error renaming project:", e);
+        alert("Failed to rename project.");
+        if (modal) modal.remove();
+        if (settingsBtn) {
+            settingsBtn.textContent = originalText;
+            settingsBtn.disabled = false;
+        }
+    }
+}
+
+window.resetProjectName = function() {
+    openResetProjectNameModal();
+}
+
+window.openResetProjectNameModal = function() {
+    const modalId = 'reset-project-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+    modal.style.zIndex = '3000';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+    card.style.animation = 'fadeIn 0.2s ease-out';
+
+    card.innerHTML = `
+        <div class="modal-header">
+            <span class="card-title">Confirm Reset</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body">
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1.5rem;">
+                Are you sure you want to revert the project name to <strong>'Default Project'</strong>?
+            </p>
+            <div style="display:flex; gap:10px; justify-content:flex-end; width:100%;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.75rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.5rem; cursor:pointer; font-weight:600; color:var(--text-main);">Cancel</button>
+                <button onclick="performResetProjectName()" style="padding:0.75rem 1.5rem; border:none; background:var(--primary); color:white; border-radius:0.5rem; cursor:pointer; font-weight:600;">Reset</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
+window.performResetProjectName = async function() {
+    const modal = document.getElementById('reset-project-modal');
+    const btn = modal ? modal.querySelector('button[onclick^="performResetProjectName"]') : null;
+    
+    if (btn) {
+        btn.textContent = 'Resetting...';
+        btn.disabled = true;
+    }
+    
+    const input = document.getElementById('settingsProjectNameInput');
+    if (input) input.value = "Default Project";
+    
+    try {
+        await setDoc(doc(db, "projects", currentProjectId), { name: "Default Project" }, { merge: true });
+        if (modal) modal.remove();
+    } catch (e) {
+        console.error("Error resetting name:", e);
+        alert("Failed to reset name.");
+        if (modal) modal.remove();
+    }
+}
+
+window.filterProjectList = function(term) {
+    const container = document.getElementById('project-list-container');
+    if (!container) return;
+    const cards = container.querySelectorAll('.card');
+    const lowerTerm = term.toLowerCase();
+    
+    cards.forEach(card => {
+        const titleEl = card.querySelector('.card-title');
+        if (titleEl) {
+            const title = titleEl.textContent.toLowerCase();
+            card.style.display = title.includes(lowerTerm) ? 'flex' : 'none';
+        }
+    });
+}
+
+window.openDeleteProjectModal = function(projectId, projectName) {
+    const modalId = 'delete-project-modal';
+    const existing = document.getElementById(modalId);
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.className = 'modal-overlay';
+    modal.style.zIndex = '3000';
+
+    const card = document.createElement('div');
+    card.className = 'modal-card';
+    card.style.maxWidth = '400px';
+    card.style.animation = 'fadeIn 0.2s ease-out';
+
+    card.innerHTML = `
+        <div class="modal-header" style="border-bottom:none; padding-bottom:0;">
+            <span class="card-title" style="color:#ef4444;"><i class="fas fa-exclamation-triangle"></i> Delete Project</span>
+            <i class="fas fa-times" style="cursor:pointer" onclick="document.getElementById('${modalId}').remove()"></i>
+        </div>
+        <div class="modal-body" style="text-align:center; padding-top:0;">
+            <div style="font-size:3rem; color:#ef4444; margin:1rem 0; opacity:0.2"><i class="fas fa-trash-alt"></i></div>
+            <h3 style="margin-bottom:0.5rem; color:var(--text-main);">Are you sure?</h3>
+            <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1.5rem; line-height:1.5;">
+                You are about to permanently delete <strong>"${escapeHtml(projectName)}"</strong>.<br>This action cannot be undone.
+            </p>
+            <div style="display:flex; gap:10px; justify-content:center; width:100%;">
+                <button onclick="document.getElementById('${modalId}').remove()" style="flex:1; padding:0.75rem; border:1px solid var(--border); background:transparent; border-radius:0.5rem; cursor:pointer; font-weight:600; color:var(--text-main);">Cancel</button>
+                <button onclick="performProjectDeletion('${projectId}')" style="flex:1; padding:0.75rem; border:none; background:#ef4444; color:white; border-radius:0.5rem; cursor:pointer; font-weight:600; box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.3);">Delete</button>
+            </div>
+        </div>
+    `;
+
+    modal.appendChild(card);
+    modal.onclick = (e) => {
+        if (e.target === modal) modal.remove();
+    };
+    document.body.appendChild(modal);
+}
+
+window.performProjectDeletion = async function(projectId) {
+    const modal = document.getElementById('delete-project-modal');
+    const btn = modal ? modal.querySelector('button[onclick^="performProjectDeletion"]') : null;
+    
+    if (btn) {
+        btn.textContent = 'Deleting...';
+        btn.disabled = true;
+    }
+
+    if (projectId === currentProjectId) {
+        switchProject('default');
+    }
+
+    try {
+        await deleteDoc(doc(db, "projects", projectId));
+        
+        if (modal) modal.remove();
+
+        if (showProjectOverview && projectId !== currentProjectId) {
+             const panel = document.getElementById('workspaceContent') || document.getElementById('mainPanel');
+             renderProjectOverview(panel);
+        }
+    } catch (e) {
+        console.error("Error deleting project:", e);
+        alert("Failed to delete project.");
+        if (modal) modal.remove();
     }
 }
