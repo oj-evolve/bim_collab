@@ -15,6 +15,13 @@
             }
         }
 
+        @media (max-width: 768px) {
+            .logo-subtitle {
+                display: block;
+                width: min-content;
+            }
+        }
+
         /* Consistent Search Bar Styling for Mobile & Web */
         .search-wrapper {
             position: relative;
@@ -59,7 +66,7 @@
                 <i class="fas fa-cubes"></i>
                 <div style="display: flex; flex-direction: column; margin-left: 10px; line-height: 1.2;">
                     <span>BIM COLLAB</span>
-                    <span style="font-size: 0.75rem; font-weight: 400;">Building Information Modeling</span>
+                    <span class="logo-subtitle" style="font-size: 0.75rem; font-weight: 400;">Building Information Modeling</span>
                 </div>
                 <span id="headerProjectName" style="display:none; padding-left:10px; border-left:2px solid var(--border); color:var(--text-muted); font-weight:500; font-size:0.9em;"></span>
             </div>
