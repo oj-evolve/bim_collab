@@ -57,7 +57,38 @@
             right: 5px;
             z-index: 7;
         }
+
+        .contact-modal {
+            background: var(--bg-card, #fff);
+            padding: 1.5rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 450px;
+            border: 1px solid var(--border, #ccc);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .contact-form-group { margin-bottom: 1rem; }
+        .contact-form-group label { display: block; margin-bottom: 0.5rem; font-size: 0.85rem; font-weight: 500; color: var(--text-muted); }
+        .contact-form-group input, .contact-form-group textarea {
+            width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: 4px;
+            background: var(--bg-body); color: var(--text-main); box-sizing: border-box;
+        }
+        /* Validation Styles */
+        .contact-form-group input:invalid:not(:placeholder-shown),
+        .contact-form-group textarea:invalid:not(:placeholder-shown) {
+            border-color: #ef4444;
+        }
     </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+                "firebase/storage": "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js",
+                "firebase/analytics": "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js"
+            }
+        }
+    </script>
 </head>
 <body>
     <header class="header">
@@ -126,9 +157,18 @@
                                 <button onclick="createProject()" style="width:100%; background:var(--bg-body); color:var(--primary); border:1px dashed var(--primary); padding:0.5rem; border-radius:0.375rem; font-size:0.75rem; cursor:pointer; margin-top:0.5rem; font-weight:600;">+ Create New Project</button>
                                 <button onclick="deleteProject()" style="width:100%; background:transparent; color:#ef4444; border:none; padding:0.5rem; font-size:0.75rem; cursor:pointer; margin-top:0.75rem; font-weight:500; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'; this.style.textDecoration='underline'" onmouseout="this.style.opacity='0.8'; this.style.textDecoration='none'">Delete Project</button>
                             </div>
+                            <div id="adminSection" style="display:none; border-bottom:1px solid var(--border); margin-bottom:0.75rem; padding-bottom:0.75rem;">
+                                <label style="font-size:0.75rem; color:var(--text-muted); font-weight:500; margin-bottom:4px; display:block;">Admin</label>
+                                <button onclick="openAdminMessagesModal()" style="width:100%; background:var(--bg-body); color:var(--text-main); border:1px solid var(--border); padding:0.5rem; border-radius:0.375rem; font-size:0.75rem; cursor:pointer; font-weight:500; display:flex; align-items:center; justify-content:center; gap:0.5rem;">
+                                    <i class="fas fa-inbox"></i> View Contact Messages
+                                </button>
+                            </div>
                             <button onclick="saveSettingsFromDropdown()" class="dropdown-save-btn">Save Changes</button>
                             <div style="height: 1px; background: var(--border); margin: 0.75rem 0;"></div>
-                            <button onclick="openLogoutConfirmationModal()" class="dropdown-logout-btn">
+                            <button onclick="openContactModal()" class="dropdown-logout-btn" style="margin-bottom: 0.5rem; background: transparent; border: 1px solid var(--border); color: var(--text-main);">
+                                <i class="fas fa-envelope"></i> Contact Us
+                            </button>
+                            <button onclick="logout()" class="dropdown-logout-btn">
                                 <i class="fas fa-sign-out-alt"></i> Logout
                             </button>
                         </div>
@@ -183,16 +223,23 @@
         </section>
     </main>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
-                "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
-                "firebase/storage": "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js",
-                "firebase/analytics": "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js"
-            }
-        }
-    </script>
+    <footer class="footer">
+        <span>&copy; OJ Evolve 2024</span>
+        <span class="footer-sep">|</span>
+        <a href="#" onclick="openContactModal(event)" style="color:white; text-decoration:underline">Contact Us</a>
+        <span class="footer-sep">|</span>
+        <a href="#" onclick="openTermsModal(event)" style="color:white; text-decoration:underline">Terms of Service</a>
+        <span class="footer-sep">|</span>
+        <a href="#" onclick="openPrivacyModal(event)" style="color:white; text-decoration:underline">Privacy Policy</a>
+        <span class="footer-sep">|</span>
+        <div class="footer-socials">
+            <a href="https://www.linkedin.com" target="_blank" rel="noopener noreferrer" title="LinkedIn"><i class="fab fa-linkedin"></i></a>
+            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" title="Twitter"><i class="fab fa-twitter"></i></a>
+            <a href="https://www.facebook.com" target="_blank" rel="noopener noreferrer" title="Facebook"><i class="fab fa-facebook"></i></a>
+            <a href="https://www.instagram.com" target="_blank" rel="noopener noreferrer" title="Instagram"><i class="fab fa-instagram"></i></a>
+        </div>
+    </footer>
+
     <script type="module" src="./src/app.js"></script>
 </body>
 </html>

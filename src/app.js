@@ -367,7 +367,12 @@ document.getElementById('roleSelect').onchange = (e) => {
     renderWorkspace();
 };
 
-window.logout = function () {
+window.logout = function (confirmed = false) {
+    if (!confirmed) {
+        openLogoutConfirmationModal();
+        return;
+    }
+
     const modal = document.getElementById('logout-confirm-modal');
     if (modal) modal.remove();
 
@@ -563,6 +568,7 @@ window.chatNode = function (id, title, vId, extraClass = '') {
                         <input type="text" id="input-${id}" placeholder="Type a message..." style="height: 36px; font-size: 0.85rem;" oninput="handleTyping('${id}')" onkeypress="if(event.key==='Enter') send('${id}')">
                         <button onclick="send('${id}')" class="send-btn" title="Send Message"><i class="fas fa-paper-plane"></i></button>
                     </div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-align: center; margin-top: 0.25rem;">End-to-End Encryption</div>
                 </div>
             `;
 }
@@ -1859,7 +1865,7 @@ window.openLogoutConfirmationModal = function() {
             <p style="font-size:0.9rem; color:var(--text-muted); margin-bottom:1.5rem;">Are you sure you want to log out?</p>
             <div style="display:flex; gap:10px; justify-content:flex-end;">
                 <button onclick="document.getElementById('${modalId}').remove()" style="padding:0.5rem 1rem; border:1px solid var(--border); background:transparent; border-radius:0.25rem; cursor:pointer; font-size:0.85rem;">Cancel</button>
-                <button onclick="logout()" style="padding:0.5rem 1rem; border:none; background:#ef4444; color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Logout</button>
+                <button onclick="logout(true)" style="padding:0.5rem 1rem; border:none; background:#ef4444; color:white; border-radius:0.25rem; cursor:pointer; font-size:0.85rem; font-weight:500;">Logout</button>
             </div>
         </div>
     `;
@@ -1886,8 +1892,58 @@ window.saveSettings = async function() {
     }
 }
 
+window.submitContactForm = async function(event) {
+    event.preventDefault();
+    const form = event.target;
+    const nameInput = form.querySelector('input[type="text"]');
+    const emailInput = form.querySelector('input[type="email"]');
+    const msgInput = form.querySelector('textarea');
+    const btn = form.querySelector('button[type="submit"]');
+
+    const name = nameInput.value.trim();
+    const email = emailInput.value.trim();
+    const message = msgInput.value.trim();
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        alert('Please enter a valid email address.');
+        return;
+    }
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+
+    try {
+        await addDoc(collection(db, "contact_messages"), {
+            name,
+            email,
+            message,
+            projectId: currentProjectId,
+            userRole: currentRole || 'guest',
+            timestamp: serverTimestamp(),
+            status: 'new'
+        });
+
+        form.style.display = 'none';
+        document.getElementById('success-msg').style.display = 'flex';
+        setTimeout(() => document.getElementById('contact-modal').remove(), 3000);
+    } catch (e) {
+        console.error("Error sending message:", e);
+        alert("Failed to send message. Please try again.");
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
 window.openContactModal = function (e) {
     if (e) e.preventDefault();
+
+    const dropdown = document.getElementById('settingsDropdown');
+    if (dropdown && dropdown.classList.contains('active')) {
+        dropdown.classList.remove('active');
+    }
+
     const modalId = 'contact-modal';
     const existing = document.getElementById(modalId);
     if (existing) existing.remove();
@@ -1907,7 +1963,7 @@ window.openContactModal = function (e) {
     const body = document.createElement('div');
     body.className = 'modal-body';
     body.innerHTML = `
-                <form onsubmit="event.preventDefault(); const email = this.querySelector('input[type=email]').value; const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/; if (!emailRegex.test(email)) { alert('Please enter a valid email address.'); return; } this.style.display='none'; document.getElementById('success-msg').style.display='flex'; setTimeout(() => document.getElementById('${modalId}').remove(), 3000);" style="display:flex; flex-direction:column; gap:1rem;">
+                <form onsubmit="submitContactForm(event)" style="display:flex; flex-direction:column; gap:1rem;">
                     <div>
                         <label style="display:block; font-size:0.85rem; margin-bottom:0.25rem; color:var(--text-muted)">Name</label>
                         <input type="text" required style="width:100%; padding:0.5rem; border:1px solid var(--border); border-radius:0.25rem; background:var(--bg-body); color:var(--text-main)">
@@ -1922,10 +1978,12 @@ window.openContactModal = function (e) {
                     </div>
                     <button type="submit" style="background:var(--primary); color:white; border:none; padding:0.75rem; border-radius:0.25rem; cursor:pointer; font-weight:600">Send Message</button>
                 </form>
-                <div id="success-msg" style="display:none; flex-direction:column; align-items:center; justify-content:center; padding:2rem 0; text-align:center; animation: fadeIn 0.5s ease-out;">
-                    <i class="fas fa-check-circle" style="font-size:4rem; color:#10b981; margin-bottom:1rem;"></i>
-                    <h3 style="margin-bottom:0.5rem; color:var(--text-main)">Message Sent!</h3>
-                    <p style="color:var(--text-muted)">We'll get back to you shortly.</p>
+                <div id="success-msg" style="display:none; flex-direction:column; align-items:center; justify-content:center; padding:3rem 1rem; text-align:center; animation: fadeIn 0.5s ease-out;">
+                    <div style="width: 70px; height: 70px; background: rgba(16, 185, 129, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 1.5rem;">
+                        <i class="fas fa-check" style="font-size:2rem; color:#10b981;"></i>
+                    </div>
+                    <h3 style="margin-bottom:0.5rem; color:var(--text-main); font-size: 1.25rem;">Message Sent Successfully</h3>
+                    <p style="color:var(--text-muted); font-size: 0.9rem; max-width: 260px; line-height: 1.5;">Thank you for reaching out. Our team will review your message and get back to you shortly.</p>
                 </div>
             `;
 
@@ -1952,7 +2010,8 @@ window.openTermsModal = function (e) {
 
     const card = document.createElement('div');
     card.className = 'modal-card';
-    card.style.maxWidth = '600px';
+    card.style.maxWidth = '700px';
+    card.style.height = '80vh';
 
     const header = document.createElement('div');
     header.className = 'modal-header';
@@ -1962,20 +2021,41 @@ window.openTermsModal = function (e) {
     body.className = 'modal-body';
     body.innerHTML = `
         <div style="line-height: 1.6; color: var(--text-main); font-size: 0.9rem;">
+            <p style="margin-bottom: 1rem; font-style: italic; color: var(--text-muted);">Last Updated: ${new Date().toLocaleDateString()}</p>
+
             <h4 style="margin-bottom: 0.5rem; color: var(--primary);">1. Acceptance of Terms</h4>
-            <p style="margin-bottom: 1rem;">By accessing and using this BIM Viewer platform, you accept and agree to be bound by the terms and provision of this agreement.</p>
+            <p style="margin-bottom: 1rem;">By accessing and using the BIM Viewer platform ("Service"), provided by OJ Evolve ("Company", "we", "us", or "our"), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by these terms, please do not use this Service.</p>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Use License</h4>
-            <p style="margin-bottom: 1rem;">Permission is granted to temporarily download one copy of the materials (information or software) on OJ Evolve's website for personal, non-commercial transitory viewing only.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Description of Service</h4>
+            <p style="margin-bottom: 1rem;">BIM Viewer is a collaborative web-based platform designed for construction and engineering professionals to view, share, and discuss Building Information Modeling (BIM) data, documents, and project stages. The Service includes role-based access, real-time messaging, and file visualization tools.</p>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. Disclaimer</h4>
-            <p style="margin-bottom: 1rem;">The materials on OJ Evolve's website are provided "as is". OJ Evolve makes no warranties, expressed or implied, and hereby disclaims and negates all other warranties including, without limitation, implied warranties or conditions of merchantability, fitness for a particular purpose, or non-infringement of intellectual property or other violation of rights.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. User Accounts and Security</h4>
+            <p style="margin-bottom: 1rem;">You are responsible for maintaining the confidentiality of your project access keys and user role sessions. You agree to notify us immediately of any unauthorized use of your account. The Service utilizes end-to-end encryption for project data; however, you acknowledge that you are responsible for the safekeeping of the decryption keys (project passwords).</p>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Limitations</h4>
-            <p style="margin-bottom: 0;">In no event shall OJ Evolve or its suppliers be liable for any damages (including, without limitation, damages for loss of data or profit, or due to business interruption) arising out of the use or inability to use the materials on OJ Evolve's website.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Intellectual Property Rights</h4>
+            <p style="margin-bottom: 1rem;"><strong>Platform:</strong> The Service and its original content, features, and functionality are owned by OJ Evolve and are protected by international copyright, trademark, patent, trade secret, and other intellectual property or proprietary rights laws.</p>
+            <p style="margin-bottom: 1rem;"><strong>User Content:</strong> You retain all rights to the data, files, and models you upload to the Service. By uploading content, you grant the Company a license to host, store, and display such content solely for the purpose of providing the Service to you and your authorized project collaborators.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">5. User Conduct</h4>
+            <p style="margin-bottom: 1rem;">You agree not to use the Service to:</p>
+            <ul style="margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: disc;">
+                <li>Upload or transmit any content that is unlawful, harmful, threatening, abusive, or otherwise objectionable.</li>
+                <li>Upload viruses, malware, or any other malicious code.</li>
+                <li>Attempt to gain unauthorized access to any portion of the Service or any other systems or networks connected to the Service.</li>
+                <li>Reverse engineer, decompile, or disassemble any aspect of the Service.</li>
+            </ul>
+
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">6. Disclaimer of Warranties</h4>
+            <p style="margin-bottom: 1rem;">The Service is provided on an "AS IS" and "AS AVAILABLE" basis. The Company makes no representations or warranties of any kind, express or implied, regarding the operation of the Service or the information, content, or materials included therein.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">7. Limitation of Liability</h4>
+            <p style="margin-bottom: 1rem;">In no event shall OJ Evolve, its directors, employees, partners, agents, suppliers, or affiliates, be liable for any indirect, incidental, special, consequential, or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses, resulting from your access to or use of or inability to access or use the Service.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">8. Changes to Terms</h4>
+            <p style="margin-bottom: 0;">We reserve the right, at our sole discretion, to modify or replace these Terms at any time. By continuing to access or use our Service after those revisions become effective, you agree to be bound by the revised terms.</p>
         </div>
-        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
-            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1rem; border-radius:0.25rem; cursor:pointer; font-weight:500">Close</button>
+        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1.5rem; border-radius:0.25rem; cursor:pointer; font-weight:600">I Understand & Agree</button>
         </div>
     `;
 
@@ -2002,7 +2082,8 @@ window.openPrivacyModal = function (e) {
 
     const card = document.createElement('div');
     card.className = 'modal-card';
-    card.style.maxWidth = '600px';
+    card.style.maxWidth = '700px';
+    card.style.height = '80vh';
 
     const header = document.createElement('div');
     header.className = 'modal-header';
@@ -2012,20 +2093,38 @@ window.openPrivacyModal = function (e) {
     body.className = 'modal-body';
     body.innerHTML = `
         <div style="line-height: 1.6; color: var(--text-main); font-size: 0.9rem;">
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">1. Information Collection</h4>
-            <p style="margin-bottom: 1rem;">We collect information you provide directly to us, such as when you create an account, update your profile, or communicate with us. This may include your name, email address, and role information.</p>
+            <p style="margin-bottom: 1rem; font-style: italic; color: var(--text-muted);">Last Updated: ${new Date().toLocaleDateString()}</p>
+
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">1. Introduction</h4>
+            <p style="margin-bottom: 1rem;">OJ Evolve ("we," "our," or "us") respects your privacy and is committed to protecting it through our compliance with this policy. This policy describes the types of information we may collect from you or that you may provide when you visit the BIM Viewer platform (our "Service") and our practices for collecting, using, maintaining, protecting, and disclosing that information.</p>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Use of Information</h4>
-            <p style="margin-bottom: 1rem;">We use the information we collect to provide, maintain, and improve our services, including to facilitate collaboration within the BIM Viewer platform and to communicate with you.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">2. Information We Collect</h4>
+            <p style="margin-bottom: 0.5rem;"><strong>Personal Information:</strong> We collect information by which you may be personally identified, such as name, email address, and professional role when you configure your user profile.</p>
+            <p style="margin-bottom: 1rem;"><strong>Project Data:</strong> We store files, architectural drawings, chat messages, and other project-related data you upload. Note that sensitive project data is encrypted before storage.</p>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. Data Security</h4>
-            <p style="margin-bottom: 1rem;">We implement appropriate technical and organizational measures to protect the security of your personal information. However, please note that no method of transmission over the Internet is 100% secure.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">3. How We Use Your Information</h4>
+            <p style="margin-bottom: 1rem;">We use information that we collect about you or that you provide to us, including any personal information:</p>
+            <ul style="margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: disc;">
+                <li>To present our Service and its contents to you.</li>
+                <li>To provide you with information, products, or services that you request from us.</li>
+                <li>To fulfill any other purpose for which you provide it (e.g., facilitating project collaboration).</li>
+                <li>To notify you about changes to our Service.</li>
+            </ul>
             
-            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Cookies</h4>
-            <p style="margin-bottom: 0;">We use cookies and similar technologies to help us understand how you use our services and to improve your experience.</p>
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">4. Data Security</h4>
+            <p style="margin-bottom: 1rem;">We have implemented measures designed to secure your personal information from accidental loss and from unauthorized access, use, alteration, and disclosure. Project messages and sensitive text are encrypted using client-side derived keys before being stored in our database.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">5. Data Retention</h4>
+            <p style="margin-bottom: 1rem;">We retain your personal information and project data only for as long as is necessary for the purposes set out in this Privacy Policy. We will retain and use your information to the extent necessary to comply with our legal obligations, resolve disputes, and enforce our legal agreements and policies.</p>
+
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">6. Your Data Rights</h4>
+            <p style="margin-bottom: 1rem;">Depending on your location, you may have rights regarding your personal data, including the right to access, correct, or delete the personal information we hold about you. You can manage your profile settings directly within the application or contact us for assistance.</p>
+            
+            <h4 style="margin-bottom: 0.5rem; color: var(--primary);">7. Contact Information</h4>
+            <p style="margin-bottom: 0;">To ask questions or comment about this privacy policy and our privacy practices, please contact us via the "Contact Us" form available in the application footer.</p>
         </div>
-        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
-            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1rem; border-radius:0.25rem; cursor:pointer; font-weight:500">Close</button>
+        <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <button onclick="document.getElementById('${modalId}').remove()" style="background:var(--primary); color:white; border:none; padding:0.5rem 1.5rem; border-radius:0.25rem; cursor:pointer; font-weight:600">I Understand</button>
         </div>
     `;
 
@@ -2045,8 +2144,6 @@ window.onload = async () => {
         history.scrollRestoration = 'manual';
     }
 
-    await initEncryption();
-
     const script = document.createElement('script');
     script.type = 'module';
     script.src = 'https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js';
@@ -2054,26 +2151,6 @@ window.onload = async () => {
 
     window.scrollTo(0, 0);
     initStages();
-
-    const footer = document.createElement('footer');
-    footer.className = 'footer';
-    footer.innerHTML = `
-                <span>&copy; OJ Evolve ${new Date().getFullYear()}</span>
-                <span class="footer-sep">|</span>
-                <a href="#" onclick="openContactModal(event)" style="color:white; text-decoration:underline">Contact Us</a>
-                <span class="footer-sep">|</span>
-                <a href="#" onclick="openTermsModal(event)" style="color:white; text-decoration:underline">Terms of Service</a>
-                <span class="footer-sep">|</span>
-                <a href="#" onclick="openPrivacyModal(event)" style="color:white; text-decoration:underline">Privacy Policy</a>
-                <span class="footer-sep">|</span>
-                <div class="footer-socials">
-                    <a href="#" title="LinkedIn"><i class="fab fa-linkedin"></i></a>
-                    <a href="#" title="Twitter"><i class="fab fa-twitter"></i></a>
-                    <a href="#" title="Facebook"><i class="fab fa-facebook"></i></a>
-                    <a href="#" title="Instagram"><i class="fab fa-instagram"></i></a>
-                </div>
-            `;
-    document.body.appendChild(footer);
 
     // Back to Top Button
     const backToTop = document.createElement('button');
@@ -2193,6 +2270,8 @@ window.onload = async () => {
             }
         }
     });
+
+    await initEncryption();
 };
 
 function playNotificationSound() {
