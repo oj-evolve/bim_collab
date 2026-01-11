@@ -465,10 +465,10 @@ window.renderWorkspace = function () {
     } else {
         panel.innerHTML = `
                     ${projectsBtn}
-                    <div class="dashboard-grid grid-2" id="dashboardGrid">
+                    <div class="dashboard-grid grid-workspace" id="dashboardGrid">
                         ${viewerNode('v1', 'Project View', 'mobile-group-1')}
-                        ${viewerNode('v2', 'Secondary View', 'mobile-group-2')}
                         ${chatNode('c1', 'Main Stream', 'v1', 'mobile-group-1')}
+                        ${viewerNode('v2', 'Secondary View', 'mobile-group-2')}
                         ${chatNode('c2', 'Private Channel', 'v2', 'mobile-group-2')}
                     </div>
                 `;
@@ -568,7 +568,7 @@ window.chatNode = function (id, title, vId, extraClass = '') {
                         <input type="text" id="input-${id}" placeholder="Type a message..." style="height: 36px; font-size: 0.85rem;" oninput="handleTyping('${id}')" onkeypress="if(event.key==='Enter') send('${id}')">
                         <button onclick="send('${id}')" class="send-btn" title="Send Message"><i class="fas fa-paper-plane"></i></button>
                     </div>
-                    <div style="font-size: 0.7rem; color: var(--text-muted); text-align: center; margin-top: 0.25rem;">End-to-End Encryption</div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-align: center; margin-top: 0.25rem;"><i class="fas fa-lock" style="margin-right: 4px;"></i>End-to-End Encrypted</div>
                 </div>
             `;
 }
