@@ -2152,6 +2152,16 @@ window.onload = async () => {
     window.scrollTo(0, 0);
     initStages();
 
+    // Move Role Selector to bottom of roadmap
+    const roleSelect = document.getElementById('roleSelect');
+    const stageList = document.getElementById('stageList');
+    if (roleSelect && stageList && stageList.parentNode) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'role-selector-wrapper';
+        wrapper.appendChild(roleSelect);
+        stageList.parentNode.appendChild(wrapper);
+    }
+
     // Back to Top Button
     const backToTop = document.createElement('button');
     backToTop.className = 'back-to-top';
